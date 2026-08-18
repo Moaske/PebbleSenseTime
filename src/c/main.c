@@ -1381,7 +1381,22 @@ static void main_window_load(Window *window) {
     // the abbreviated "DD Mmm" format below frees up the width the plain
     // weight used to buy. Text is set by update_date_layout() (called from
     // update_tiles()).
-    s_day_layer = text_layer_create(GRect(right_x, weather_y + WEATHER_TOP_LINE_NUDGE, right_w, line_h));
+    //
+    // WEEKDAY WIDTH: unlike DATE below it (which keeps right_x/right_w,
+    // stopping short of the icon), the weekday box's LEFT edge now starts
+    // at screen center - i.e. it runs from behind the weather icon all the
+    // way to the tile row's right edge - mirroring what LOCATION already
+    // does on the other side (see the comment on s_location_layer above).
+    // Text stays right-aligned (GTextAlignmentRight, unchanged), so normal-
+    // length weekday names still land exactly where they used to; only a
+    // long localized name grows leftward into the extra room, behind the
+    // icon. That only reads correctly because the weather icon layer is
+    // created last/topmost below, so it paints over whatever part of this
+    // text happens to sit underneath it - same reasoning as LOCATION's
+    // overlap, just mirrored to the opposite side and line.
+    int day_x = bounds.size.w / 2;
+    int day_w = tile_row_right - day_x;
+    s_day_layer = text_layer_create(GRect(day_x, weather_y + WEATHER_TOP_LINE_NUDGE, day_w, line_h));
     text_layer_set_background_color(s_day_layer, GColorClear);
     text_layer_set_text_color(s_day_layer, GColorWhite);
     text_layer_set_font(s_day_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
