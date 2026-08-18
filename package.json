@@ -1,0 +1,202 @@
+{
+    "author": "Moaske",
+    "dependencies": {
+        "@rebble/clay": "^1.0.10"
+    },
+    "keywords": [
+        "pebble-app"
+    ],
+    "name": "sense-time",
+    "pebble": {
+        "capabilities": [
+            "location",
+            "configurable",
+            "health"
+        ],
+        "displayName": "Sense Time",
+        "enableMultiJS": true,
+        "messageKeys": [
+            "TEMPERATURE",
+            "WEATHER_ICON",
+            "LOCATION_NAME",
+            "REQUEST_WEATHER",
+            "UseFahrenheit",
+            "Wallpaper",
+            "TEMP_HIGH",
+            "TEMP_LOW",
+            "PHONE_BATTERY",
+            "PHONE_CHARGING"
+        ],
+        "projectType": "native",
+        "resources": {
+            "media": [
+                {
+                    "file": "images/wx_snow.png",
+                    "name": "IMAGE_WX_SNOW",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_thunder.png",
+                    "name": "IMAGE_WX_THUNDER",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_clear_day.png",
+                    "name": "IMAGE_WX_CLEAR_DAY",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_clear_night.png",
+                    "name": "IMAGE_WX_CLEAR_NIGHT",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_cloudy.png",
+                    "name": "IMAGE_WX_CLOUDY",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_fog.png",
+                    "name": "IMAGE_WX_FOG",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_partly_day.png",
+                    "name": "IMAGE_WX_PARTLY_DAY",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_partly_night.png",
+                    "name": "IMAGE_WX_PARTLY_NIGHT",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/wx_rain.png",
+                    "name": "IMAGE_WX_RAIN",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "fonts/Sony_Sketch.ttf",
+                    "name": "SONY_SKETCH_52",
+                    "targetPlatforms": null,
+                    "type": "font"
+                },
+                {
+                    "file": "fonts/Sony_Sketch.ttf",
+                    "name": "SONY_SKETCH_24",
+                    "targetPlatforms": null,
+                    "type": "font"
+                },
+                {
+                    "file": "fonts/Sony_Sketch.ttf",
+                    "name": "SONY_SKETCH_70",
+                    "targetPlatforms": null,
+                    "type": "font"
+                },
+                {
+                    "file": "images/clock_island.png",
+                    "name": "CLOCK_ISLAND",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper05.png",
+                    "name": "HTC_WALLPAPER05",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper01.png",
+                    "name": "HTC_WALLPAPER01",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper02.png",
+                    "name": "HTC_WALLPAPER02",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper03.png",
+                    "name": "HTC_WALLPAPER03",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper04.png",
+                    "name": "HTC_WALLPAPER04",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "characterRegex": "[0-9:.]",
+                    "file": "fonts/segoeuisl.ttf",
+                    "name": "FONT_SEGOEUISL_70",
+                    "targetPlatforms": null,
+                    "type": "font"
+                },
+                {
+                    "file": "images/raindrops.png",
+                    "name": "RAINDROPS",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/phone.png",
+                    "name": "PHONE",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/watch.png",
+                    "name": "WATCH",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/steps.png",
+                    "name": "STEPS",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/weather.png",
+                    "name": "WEATHER",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/sleep.png",
+                    "name": "SLEEP",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "fonts/seguisb.ttf",
+                    "name": "FONT_SEGOEUISB_20",
+                    "targetPlatforms": null,
+                    "type": "font"
+                }
+            ]
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "emery"
+        ],
+        "uuid": "f5caab26-b45d-49f6-803d-19dfa2df9201",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "1.0.0"
+}
