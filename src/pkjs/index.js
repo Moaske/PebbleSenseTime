@@ -39,6 +39,8 @@ var clay = new Clay(clayConfig);
 
 var DEFAULT_FAHRENHEIT = false;
 var DEFAULT_WALLPAPER = 0;
+var DEFAULT_BOLD_CLOCK_FONT = false;
+var DEFAULT_RAINDROPS_ENABLED = true;
 var FALLBACK_LOCATION_NAME = '----';
 
 // ----------------------------------------------------------------------
@@ -70,7 +72,16 @@ function loadSettings() {
   var useFahrenheit = storedUnit === null ? DEFAULT_FAHRENHEIT : (storedUnit === 'true');
   var storedWallpaper = localStorage.getItem('Wallpaper');
   var wallpaper = storedWallpaper === null ? DEFAULT_WALLPAPER : parseInt(storedWallpaper, 10);
-  return { useFahrenheit: useFahrenheit, wallpaper: wallpaper };
+  var storedBoldClockFont = localStorage.getItem('BoldClockFont');
+  var boldClockFont = storedBoldClockFont === null ? DEFAULT_BOLD_CLOCK_FONT : (storedBoldClockFont === 'true');
+  var storedRaindropsEnabled = localStorage.getItem('RaindropsEnabled');
+  var raindropsEnabled = storedRaindropsEnabled === null ? DEFAULT_RAINDROPS_ENABLED : (storedRaindropsEnabled === 'true');
+  return {
+    useFahrenheit: useFahrenheit,
+    wallpaper: wallpaper,
+    boldClockFont: boldClockFont,
+    raindropsEnabled: raindropsEnabled
+  };
 }
 
 function saveSettings(dict) {
@@ -79,6 +90,12 @@ function saveSettings(dict) {
   }
   if (typeof dict.Wallpaper !== 'undefined') {
     localStorage.setItem('Wallpaper', dict.Wallpaper);
+  }
+  if (typeof dict.BoldClockFont !== 'undefined') {
+    localStorage.setItem('BoldClockFont', dict.BoldClockFont ? 'true' : 'false');
+  }
+  if (typeof dict.RaindropsEnabled !== 'undefined') {
+    localStorage.setItem('RaindropsEnabled', dict.RaindropsEnabled ? 'true' : 'false');
   }
 }
 
@@ -144,17 +161,22 @@ function reverseGeocode(lat, lon, callback) {
 }
 
 function fetchForecastAndSend(lat, lon, locationName) {
-  var settings = loadSettings();
-  var unit = settings.useFahrenheit ? 'fahrenheit' : 'celsius';
-  // 'daily=temperature_2m_max,temperature_2m_min' feeds the stats panel's
-  // "H:.. L:.." row - Open-Meteo already returns these in the same unit as
-  // temperature_unit above, so no extra conversion is needed before
-  // sending them on to the watch.
+  // Always requested (and sent to the watch) in Celsius, regardless of the
+  // "Use Fahrenheit" Clay setting - the watch itself now converts for
+  // display (celsius_to_fahrenheit()/display_temp() in src/c/main.c).
+  // Previously this passed temperature_unit=fahrenheit when the toggle was
+  // on, which meant flipping the toggle only actually changed what was
+  // shown once a brand new GPS+network weather fetch completed (and never
+  // did if that fetch failed or the phone had no signal) - the watch just
+  // relabeled whatever number it already had with the new unit letter in
+  // the meantime, which read as "the toggle doesn't recalculate anything".
+  // Fetching in one fixed unit and converting on-watch makes the toggle
+  // take effect immediately, with no network round-trip involved.
   var wUrl = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat +
       '&longitude=' + lon +
       '&current=temperature_2m,weather_code,is_day' +
       '&daily=temperature_2m_max,temperature_2m_min' +
-      '&temperature_unit=' + unit +
+      '&temperature_unit=celsius' +
       '&timezone=auto';
 
   xhrRequest(wUrl, 'GET', function (wText) {
@@ -291,7 +313,14 @@ Pebble.addEventListener('webviewclosed', function (e) {
   saveSettings(dict);
   sendToWatch(dict);
 
-  // Units may have changed - refresh weather immediately (location is
-  // always automatic, so no need to re-check that here).
-  fetchWeather();
+  // No weather refetch needed here anymore: fetchForecastAndSend() always
+  // requests Celsius and the watch converts for display on its own (see
+  // the comment in fetchForecastAndSend()), so a Use-Fahrenheit toggle no
+  // longer needs a fresh GPS+network round-trip to take effect - it's
+  // instant, driven entirely by the UseFahrenheit tuple already sent above
+  // via sendToWatch(dict). None of the other Clay settings (wallpaper,
+  // bold font, raindrops) touch weather data either, so there's nothing
+  // left here that a refetch would actually update - the existing periodic
+  // refresh (REQUEST_WEATHER from the watch, see the 'appmessage' listener
+  // above) still keeps conditions themselves current.
 });

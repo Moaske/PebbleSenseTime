@@ -25,7 +25,9 @@
             "TEMP_HIGH",
             "TEMP_LOW",
             "PHONE_BATTERY",
-            "PHONE_CHARGING"
+            "PHONE_CHARGING",
+            "BoldClockFont",
+            "RaindropsEnabled"
         ],
         "projectType": "native",
         "resources": {
@@ -182,10 +184,25 @@
                     "type": "bitmap"
                 },
                 {
+                    "characterRegex": "[ -~\u00b0\u2191]",
                     "file": "fonts/seguisb.ttf",
                     "name": "FONT_SEGOEUISB_20",
                     "targetPlatforms": null,
                     "type": "font"
+                },
+                {
+                    "characterRegex": "[0-9:.]",
+                    "file": "fonts/seguisb.ttf",
+                    "name": "FONT_SEGOEUISB_70",
+                    "targetPlatforms": null,
+                    "type": "font"
+                },
+                {
+                    "file": "images/app_icon_sense.png",
+                    "menuIcon": true,
+                    "name": "APP_ICON_SENSE",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
                 }
             ]
         },
@@ -198,5 +215,5 @@
             "watchface": true
         }
     },
-    "version": "1.0.0"
+    "version": "1.0.3"
 }

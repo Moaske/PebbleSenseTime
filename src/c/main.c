@@ -158,6 +158,15 @@
                                      // and the widened location text box above/behind it - see
                                      // "Weather + date strip" in the README.
 
+#define SHADOW_OFFSET 2   // drop-shadow trick for the five stats-panel row texts below the
+                            // clock island ONLY (weather H/L, steps, sleep, watch battery,
+                            // phone battery) - a black copy of each layer sits SHADOW_OFFSET px
+                            // down-and-right of the real (white) one, painted first so the real
+                            // layer sits on top of it. Deliberately NOT applied to the temp/
+                            // location/weekday/date strip, which sits ON the clock island
+                            // itself, not below it. See create_shadow_text_layer()/
+                            // set_shadowed_text() below.
+
 #define HOUSING_PAD 8        // gap between the housing panel edge and the tiles/weather it frames
 #define HOUSING_H 129        // CLOCK_ISLAND's actual authored height (192x129px, re-exported to
                               // match the tile/weather row after the TILE_H shrink) - kept as an
@@ -218,6 +227,10 @@ typedef struct {
 typedef struct {
     bool use_fahrenheit;
     int wallpaper_index;   // which HTC_WALLPAPER0N is the active background (0-4)
+    bool bold_clock_font;  // false = Segoe UI Semilight (FONT_SEGOEUISL_70, default),
+                            // true = Segoe UI Semibold (FONT_SEGOEUISB_70)
+    bool raindrops_enabled;   // default true - gates the RAINDROPS overlay alongside the
+                                // existing weathercode==6 check, see update_weather_layout()
 } ClaySettings;
 
 #define SETTINGS_KEY 1
@@ -244,15 +257,31 @@ static ClaySettings settings;
 
 // Weather state
 static bool s_has_weather = false;
+// Always stored in Celsius, regardless of settings.use_fahrenheit - the
+// phone JS (src/pkjs/index.js) always fetches from Open-Meteo in Celsius
+// and never re-fetches just because the unit toggle changed. Converting to
+// Fahrenheit for display (celsius_to_fahrenheit() below) happens entirely
+// on-watch, at format time, so flipping the Clay "Use Fahrenheit" toggle
+// recalculates the displayed number instantly - it used to just swap the
+// unit letter and leave the number as whatever was last fetched (in
+// whichever unit that happened to be) until the next weather refresh,
+// which could be minutes away or never arrive at all if the phone's
+// GPS/network fetch failed.
 static int s_temperature = 0;
 static int s_weather_icon = 0;
 static char s_location_name[32] = "----";
-static GBitmap *s_weather_bitmaps[9];
+static GBitmap *s_weather_icon_bitmap;   // lazy-loaded, only the CURRENT icon stays resident -
+                                           // see set_weather_icon_bitmap() below
+static int s_weather_icon_bitmap_index = -1;   // which of the 9 is currently loaded (-1 = none yet)
 static BitmapLayer *s_weather_icon_layer;
 static TextLayer *s_temp_layer;
 static TextLayer *s_location_layer;
 static TextLayer *s_day_layer;    // weekday name, right column top line - see update_date_layout()
 static TextLayer *s_date_layer;   // "DD Month", right column bottom line
+
+#define WEATHER_ICON_RAIN 6   // index into WEATHER_RESOURCE_IDS[]/weatherCodeToIconIndex() -
+                                // matches index.js's own comment ("6 rain"). Used to trigger the
+                                // full-screen RAINDROPS overlay, see s_raindrops_layer below.
 
 static const uint32_t WEATHER_RESOURCE_IDS[9] = {
     RESOURCE_ID_IMAGE_WX_CLEAR_DAY,
@@ -265,6 +294,16 @@ static const uint32_t WEATHER_RESOURCE_IDS[9] = {
     RESOURCE_ID_IMAGE_WX_SNOW,
     RESOURCE_ID_IMAGE_WX_THUNDER
 };
+
+// Full-screen RAINDROPS overlay - shown only while BOTH the user's Clay
+// toggle is on (settings.raindrops_enabled, default true) AND the current
+// weather condition is rain (WEATHER_ICON_RAIN); hidden if either is
+// false. Created LAST in main_window_load() (after every other layer,
+// including the stats panel), so it's the topmost layer in the entire
+// window and can draw over absolutely everything else - tiles, housing,
+// weather strip, stats panel.
+static BitmapLayer *s_raindrops_layer;
+static GBitmap *s_raindrops_bitmap;
 
 #define NUM_WALLPAPERS 5
 static const uint32_t WALLPAPER_RESOURCE_IDS[NUM_WALLPAPERS] = {
@@ -283,29 +322,34 @@ static GFont s_stats_font;   // FONT_SEGOEUISB_20 - loaded in main_window_load()
 static BitmapLayer *s_stats_weather_icon_layer;
 static GBitmap *s_stats_weather_icon_bitmap;
 static TextLayer *s_stats_temp_hilo_layer;   // "H:24° L:16°C" - row 1
+static TextLayer *s_stats_temp_hilo_shadow_layer;   // drop shadow - see SHADOW_OFFSET
 
 static BitmapLayer *s_stats_steps_icon_layer;
 static GBitmap *s_stats_steps_icon_bitmap;
 static TextLayer *s_stats_steps_layer;       // row 2, left half - HealthService, on-watch
+static TextLayer *s_stats_steps_shadow_layer;       // drop shadow - see SHADOW_OFFSET
 
 static BitmapLayer *s_stats_sleep_icon_layer;
 static GBitmap *s_stats_sleep_icon_bitmap;
 static TextLayer *s_stats_sleep_layer;       // row 2, right half - HealthService, on-watch
+static TextLayer *s_stats_sleep_shadow_layer;       // drop shadow - see SHADOW_OFFSET
 
 static BitmapLayer *s_stats_watch_icon_layer;
 static GBitmap *s_stats_watch_icon_bitmap;
 static TextLayer *s_stats_watch_battery_layer;   // row 3, left half - BatteryStateService, on-watch
+static TextLayer *s_stats_watch_battery_shadow_layer;   // drop shadow - see SHADOW_OFFSET
 
 static BitmapLayer *s_stats_phone_icon_layer;
 static GBitmap *s_stats_phone_icon_bitmap;
 static TextLayer *s_stats_phone_battery_layer;   // row 3, right half - AppMessage from phone JS
+static TextLayer *s_stats_phone_battery_shadow_layer;   // drop shadow - see SHADOW_OFFSET
 
 static Layer *s_stats_divider1_layer;   // plain 1px white hairlines - see stats_divider_update_proc()
 static Layer *s_stats_divider2_layer;
 
 // Weather high/low (today) - arrive over AppMessage alongside the existing
-// current-conditions fields, already converted to whatever unit (C/F) the
-// forecast request was made in, same as s_temperature.
+// current-conditions fields. Always Celsius, same as s_temperature (see the
+// note there) - converted for display in celsius_to_fahrenheit() below.
 static int s_temp_high = 0;
 static int s_temp_low = 0;
 
@@ -329,6 +373,8 @@ static bool s_phone_charging = false;   // MESSAGE_KEY_PHONE_CHARGING - shown as
 static void prv_default_settings(void) {
     settings.use_fahrenheit = false;
     settings.wallpaper_index = 0;   // HTC_WALLPAPER01
+    settings.bold_clock_font = false;   // Semilight
+    settings.raindrops_enabled = true;
 }
 
 static void prv_save_settings(void) {
@@ -422,10 +468,32 @@ static void set_background_wallpaper(int index) {
     if (index < 0 || index >= NUM_WALLPAPERS) index = 0;
 
     if (s_background_bitmap) {
+        // Clear the layer's own reference FIRST, before freeing the bitmap
+        // it points to - otherwise, if the new bitmap below fails to load,
+        // s_background_layer is left holding a dangling pointer to memory
+        // that was already freed (a real bug this project had all along,
+        // just never hit until a decode failure actually happened on real
+        // hardware - see the note below).
+        bitmap_layer_set_bitmap(s_background_layer, NULL);
         gbitmap_destroy(s_background_bitmap);
         s_background_bitmap = NULL;
     }
-    s_background_bitmap = gbitmap_create_with_resource(WALLPAPER_RESOURCE_IDS[index]);
+    GBitmap *new_bitmap = gbitmap_create_with_resource(WALLPAPER_RESOURCE_IDS[index]);
+    if (!new_bitmap) {
+        // Decode failed (out of memory, or a corrupt/oversized resource) -
+        // this happened on real hardware once with a 24-bit truecolor PNG
+        // here (firmware logged "gbitmap_png.c: PNG memory allocation
+        // failed"); the wallpaper PNGs are now re-encoded to Pebble's own
+        // native 64-color palette, which should avoid it going forward.
+        // The layer's bitmap was already cleared to NULL above, so this
+        // just leaves the wallpaper blank (falling through to the plain
+        // black window background) rather than a dangling pointer - and
+        // logs loudly so it's obvious why, instead of failing silently.
+        APP_LOG(APP_LOG_LEVEL_ERROR,
+                "set_background_wallpaper: failed to load wallpaper index %d (decode/OOM)", index);
+        return;
+    }
+    s_background_bitmap = new_bitmap;
     bitmap_layer_set_bitmap(s_background_layer, s_background_bitmap);
     layer_mark_dirty(bitmap_layer_get_layer(s_background_layer));
 }
@@ -568,6 +636,12 @@ static void flip_tile_to(int index, int new_value, int stagger_index) {
 // every minute tick.
 static void update_stats_panel(void);
 
+// Forward declaration: defined down near create_stat_entry(), but
+// update_stats_panel() below needs it to keep each of the five stats-row
+// shadow layers' black copy in sync with its real (white) layer's text -
+// see SHADOW_OFFSET.
+static void set_shadowed_text(TextLayer *shadow, TextLayer *real, const char *text);
+
 // AM/PM label - only visible in 12h mode (an empty string draws nothing, so
 // no need to hide/show the layer itself). Uses the RAW 24h hour (before
 // update_tiles() below converts its own local `hour` var to 12h), so this
@@ -581,22 +655,78 @@ static void update_ampm_label(struct tm *tick_time) {
     text_layer_set_text(s_ampm_layer, tick_time->tm_hour < 12 ? "AM" : "PM");
 }
 
-// Weekday name ("%A") and "DD Mmm" ("%d %b", abbreviated month) for the
-// right-hand weather column. Pebble's own strftime() is locale-aware for
-// %A/%b - it uses whatever language the watch's system locale is set to
-// (via the Pebble mobile app), so this follows the user's language setting
-// for free, with no phone-side involvement needed. Only refreshed at
-// minute granularity like everything else here - the date only actually
-// changes once a day, but re-formatting every tick is negligible cost.
+// Weekday name (full) and "DD Mmm" (abbreviated month) for the right-hand
+// weather column.
+//
+// CORRECTION: this used to be built with strftime("%A")/strftime("%b"),
+// on the assumption that Pebble's strftime() is locale-aware. You caught
+// on real hardware that it isn't - changing the watch's language did
+// nothing to the day/date text. That claim turned out to be wrong; per
+// our earlier PebbleMetroWP8 watchface (which solved this exact problem),
+// strftime()'s weekday/month names are NOT tied to the watch's live
+// system language at all - they're always English, regardless of locale.
+// PebbleMetroWP8's fix was a small hand-built name table matched against
+// i18n_get_system_locale() (the watch's OWN current locale, e.g. "en_US",
+// "nl_NL" - a real, live Pebble API, unrelated to strftime), and this is
+// the same fix applied here. Unlike that project, GOTHIC_18_BOLD is a
+// Pebble SYSTEM font here (not a custom-baked one with an ASCII-only
+// glyph subset), so there's no need to strip accents or abbreviate
+// weekday names down to 3 letters - full, properly-accented names are
+// used directly.
+typedef struct {
+    const char *lang_prefix;   // matched against the start of i18n_get_system_locale()
+    const char *weekdays[7];   // indexed by tm_wday: Sun..Sat, full names
+    const char *months[12];    // indexed by tm_mon: Jan..Dec, abbreviated
+} LocaleDateNames;
+
+static const LocaleDateNames LOCALE_DATE_TABLE[] = {
+    { "en", { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" },
+            { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" } },
+    { "fr", { "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi" },
+            { "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Aoû", "Sep", "Oct", "Nov", "Déc" } },
+    { "de", { "Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag" },
+            { "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez" } },
+    { "es", { "Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado" },
+            { "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic" } },
+    { "it", { "Domenica", "Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato" },
+            { "Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic" } },
+    { "nl", { "Zondag", "Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag" },
+            { "Jan", "Feb", "Mrt", "Apr", "Mei", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec" } },
+    { "pt", { "Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado" },
+            { "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez" } },
+};
+#define LOCALE_DATE_TABLE_COUNT (sizeof(LOCALE_DATE_TABLE) / sizeof(LOCALE_DATE_TABLE[0]))
+
+// Returns the name table to use for the watch's current locale, matched
+// by language prefix (e.g. "nl" matches both "nl_NL" and "nl_BE").
+// Falls back to English for any language not in the table above.
+static const LocaleDateNames *locale_date_names(void) {
+    const char *locale = i18n_get_system_locale();
+    for (size_t i = 0; i < LOCALE_DATE_TABLE_COUNT; i++) {
+        size_t prefix_len = strlen(LOCALE_DATE_TABLE[i].lang_prefix);
+        if (strncmp(locale, LOCALE_DATE_TABLE[i].lang_prefix, prefix_len) == 0) {
+            return &LOCALE_DATE_TABLE[i];
+        }
+    }
+    return &LOCALE_DATE_TABLE[0]; // fallback: English
+}
+
+// Only refreshed at minute granularity like everything else here - the
+// date only actually changes once a day, but re-checking every tick is
+// negligible cost and means a language change takes effect on the very
+// next minute tick rather than needing a relaunch.
 static void update_date_layout(struct tm *tick_time) {
     if (!s_day_layer || !s_date_layer) return;
 
-    static char day_buf[24];
-    static char date_buf[24];
-    strftime(day_buf, sizeof(day_buf), "%A", tick_time);
-    strftime(date_buf, sizeof(date_buf), "%d %b", tick_time);
+    const LocaleDateNames *names = locale_date_names();
 
-    text_layer_set_text(s_day_layer, day_buf);
+    static char date_buf[24];
+    snprintf(date_buf, sizeof(date_buf), "%02d %s", tick_time->tm_mday, names->months[tick_time->tm_mon]);
+
+    // Weekday name points directly into the static const table above - no
+    // buffer copy needed, that string literal's storage lives for the
+    // entire program, same as any other string literal.
+    text_layer_set_text(s_day_layer, names->weekdays[tick_time->tm_wday]);
     text_layer_set_text(s_date_layer, date_buf);
 }
 
@@ -661,24 +791,116 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
 // WEATHER (AppMessage from PebbleKit JS)
 // ============================================================================
 
+// RAINDROPS overlay visibility - loads/frees the (full-screen-sized) bitmap
+// on demand rather than keeping it resident for the whole app lifetime,
+// same memory-conscious pattern set_background_wallpaper() already uses
+// for the wallpaper bitmaps (only what's currently needed stays in
+// memory). Safe to call repeatedly with the same value.
+static void set_raindrops_visible(bool visible) {
+    if (!s_raindrops_layer) return;
+    Layer *layer = bitmap_layer_get_layer(s_raindrops_layer);
+    if (visible) {
+        if (!s_raindrops_bitmap) {
+            s_raindrops_bitmap = gbitmap_create_with_resource(RESOURCE_ID_RAINDROPS);
+            if (!s_raindrops_bitmap) {
+                APP_LOG(APP_LOG_LEVEL_ERROR, "set_raindrops_visible: failed to load RAINDROPS (decode/OOM)");
+                return;   // leave the layer hidden rather than showing a blank bitmap
+            }
+            bitmap_layer_set_bitmap(s_raindrops_layer, s_raindrops_bitmap);
+        }
+        layer_set_hidden(layer, false);
+    } else {
+        layer_set_hidden(layer, true);
+        if (s_raindrops_bitmap) {
+            bitmap_layer_set_bitmap(s_raindrops_layer, NULL);
+            gbitmap_destroy(s_raindrops_bitmap);
+            s_raindrops_bitmap = NULL;
+        }
+    }
+}
+
+// Weather icon - lazy-loaded/freed the same way, and for the same reason:
+// this used to preload all 9 icons at once and keep them ALL resident for
+// the app's entire lifetime ("cheap enough" was the assumption when there
+// were only 9 small 48x48 icons and nothing else competing for heap).
+// That assumption didn't hold up once the wallpaper-OOM investigation
+// showed real hardware genuinely running out of heap decoding a single
+// full-screen bitmap - 9 permanently-resident icons is exactly the kind
+// of fixed baseline memory that eats into the headroom a wallpaper/font
+// swap needs. Only the CURRENTLY-shown icon is kept loaded now, same
+// pattern as set_background_wallpaper()/set_raindrops_visible(). Skips
+// the reload entirely if the requested icon is already the one loaded
+// (the common case - weather rarely changes between refreshes).
+static void set_weather_icon_bitmap(int icon) {
+    if (icon < 0 || icon > 8) icon = 4;
+    if (!s_weather_icon_layer) return;
+    if (icon == s_weather_icon_bitmap_index && s_weather_icon_bitmap) return;
+
+    if (s_weather_icon_bitmap) {
+        // Clear the layer's reference before freeing, same dangling-pointer
+        // fix applied to set_background_wallpaper() - matters here even
+        // more now, since a failed decode below is no longer a rare event.
+        bitmap_layer_set_bitmap(s_weather_icon_layer, NULL);
+        gbitmap_destroy(s_weather_icon_bitmap);
+        s_weather_icon_bitmap = NULL;
+        s_weather_icon_bitmap_index = -1;
+    }
+
+    GBitmap *new_bitmap = gbitmap_create_with_resource(WEATHER_RESOURCE_IDS[icon]);
+    if (!new_bitmap) {
+        APP_LOG(APP_LOG_LEVEL_ERROR,
+                "set_weather_icon_bitmap: failed to load weather icon %d (decode/OOM)", icon);
+        return;   // layer's bitmap is already NULL from above - leaves it blank, not dangling
+    }
+    s_weather_icon_bitmap = new_bitmap;
+    s_weather_icon_bitmap_index = icon;
+    bitmap_layer_set_bitmap(s_weather_icon_layer, s_weather_icon_bitmap);
+}
+
+// s_temperature/s_temp_high/s_temp_low are always Celsius (see the note on
+// s_temperature above) - this is the one place that converts for display.
+// Integer-only rounding (avoiding round()/roundf(), which Pebble's libc
+// doesn't reliably provide): F = C*9/5 + 32, rounded to the nearest
+// integer rather than truncated toward zero. Plain C integer division
+// (tenths / 5) always truncates toward zero, which under-rounds every
+// negative, non-multiple-of-5 case (e.g. -38/5 would truncate to -7 when
+// the true value -7.6 should round to -8) - nudging the numerator by ±2
+// before dividing, with the sign matched to tenths, corrects for that.
+static int celsius_to_fahrenheit(int c) {
+    int tenths = c * 9;
+    int rounded = (tenths >= 0) ? (tenths + 2) / 5 : (tenths - 2) / 5;
+    return rounded + 32;
+}
+
+static int display_temp(int celsius) {
+    return settings.use_fahrenheit ? celsius_to_fahrenheit(celsius) : celsius;
+}
+
 static void update_weather_layout(void) {
     if (!s_has_weather) {
         text_layer_set_text(s_location_layer, "");
         text_layer_set_text(s_temp_layer, "");
+        // No weather data yet - definitely not raining as far as we know.
+        set_raindrops_visible(false);
         return;
     }
 
     static char temp_buf[8];
-    snprintf(temp_buf, sizeof(temp_buf), "%d°%s", s_temperature,
+    snprintf(temp_buf, sizeof(temp_buf), "%d°%s", display_temp(s_temperature),
               settings.use_fahrenheit ? "F" : "C");
     text_layer_set_text(s_temp_layer, temp_buf);
     text_layer_set_text(s_location_layer, s_location_name);
 
     int icon = s_weather_icon;
     if (icon < 0 || icon > 8) icon = 4;
-    if (s_weather_bitmaps[icon]) {
-        bitmap_layer_set_bitmap(s_weather_icon_layer, s_weather_bitmaps[icon]);
-    }
+    set_weather_icon_bitmap(icon);
+
+    // RAINDROPS overlay: visible only while BOTH the user's toggle is on
+    // (settings.raindrops_enabled, Clay "Show raindrops in rain" - default
+    // on) AND the (clamped, same as what's actually drawn above) icon
+    // index is WEATHER_ICON_RAIN. Hidden for every other condition, or
+    // whenever the toggle is off regardless of weathercode.
+    set_raindrops_visible(settings.raindrops_enabled && icon == WEATHER_ICON_RAIN);
 }
 
 // ============================================================================
@@ -708,20 +930,23 @@ static void format_sleep_duration(char *buf, size_t buf_size, int sleep_seconds)
 // Refreshes all three stats-panel rows. Cheap enough to call on every
 // minute tick (from update_tiles()) as well as whenever a relevant
 // AppMessage arrives (weather high/low, phone battery, or a UseFahrenheit
-// change affecting row 1's unit letter) - it just re-formats and
+// change recalculating row 1's H/L values) - it just re-formats and
 // re-assigns text, no layout/geometry work happens here.
 static void update_stats_panel(void) {
-    // Row 1: today's high/low - already in whatever unit (C/F) the
-    // forecast was fetched in, same as s_temperature; see the WEATHER
-    // section above and TEMP_HIGH/TEMP_LOW in inbox_received_callback().
+    // Row 1: today's high/low - s_temp_high/s_temp_low are always Celsius
+    // (see the note on s_temperature above); display_temp() converts for
+    // display the same way the current-conditions temp does, so this stays
+    // in sync with the Clay "Use Fahrenheit" toggle immediately, not just
+    // the unit letter.
     static char hilo_buf[24];
     if (s_has_weather) {
-        snprintf(hilo_buf, sizeof(hilo_buf), "High:%d° Low:%d°%s",
-                  s_temp_high, s_temp_low, settings.use_fahrenheit ? "F" : "C");
+        snprintf(hilo_buf, sizeof(hilo_buf), "H:%d° L:%d°%s",
+                  display_temp(s_temp_high), display_temp(s_temp_low),
+                  settings.use_fahrenheit ? "F" : "C");
     } else {
         snprintf(hilo_buf, sizeof(hilo_buf), "--");
     }
-    text_layer_set_text(s_stats_temp_hilo_layer, hilo_buf);
+    set_shadowed_text(s_stats_temp_hilo_shadow_layer, s_stats_temp_hilo_layer, hilo_buf);
 
     // Row 2, left: steps.
     static char steps_buf[16];
@@ -731,7 +956,7 @@ static void update_stats_panel(void) {
     } else {
         snprintf(steps_buf, sizeof(steps_buf), "--");
     }
-    text_layer_set_text(s_stats_steps_layer, steps_buf);
+    set_shadowed_text(s_stats_steps_shadow_layer, s_stats_steps_layer, steps_buf);
 
     // Row 2, right: sleep total, formatted as "7h 32m".
     static char sleep_buf[16];
@@ -741,14 +966,14 @@ static void update_stats_panel(void) {
     } else {
         snprintf(sleep_buf, sizeof(sleep_buf), "--");
     }
-    text_layer_set_text(s_stats_sleep_layer, sleep_buf);
+    set_shadowed_text(s_stats_sleep_shadow_layer, s_stats_sleep_layer, sleep_buf);
 
     // Row 3, left: watch battery - BatteryStateService, on-watch, always
     // available (no accessibility check needed, unlike Health metrics).
     static char watch_batt_buf[8];
     BatteryChargeState watch_batt = battery_state_service_peek();
     snprintf(watch_batt_buf, sizeof(watch_batt_buf), "%d%%", watch_batt.charge_percent);
-    text_layer_set_text(s_stats_watch_battery_layer, watch_batt_buf);
+    set_shadowed_text(s_stats_watch_battery_shadow_layer, s_stats_watch_battery_layer, watch_batt_buf);
 
     // Row 3, right: phone battery - no native Pebble API for this, arrives
     // over AppMessage from the phone's own JS (see PHONE_BATTERY/
@@ -764,7 +989,7 @@ static void update_stats_panel(void) {
     } else {
         snprintf(phone_batt_buf, sizeof(phone_batt_buf), "--");
     }
-    text_layer_set_text(s_stats_phone_battery_layer, phone_batt_buf);
+    set_shadowed_text(s_stats_phone_battery_shadow_layer, s_stats_phone_battery_layer, phone_batt_buf);
 }
 
 // Plain 1px white hairline - shared by both stats-panel divider Layers.
@@ -786,6 +1011,11 @@ static int tuple_get_int(Tuple *t, int fallback) {
     if (t->type == TUPLE_CSTRING) return atoi(t->value->cstring);
     return (int)t->value->int32;
 }
+
+// Forward declaration: defined down near create_tile()/main_window_load(),
+// but inbox_received_callback() below needs to call it live when the
+// BoldClockFont Clay toggle changes.
+static void set_flip_font(bool bold);
 
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
     bool weather_changed = false;
@@ -857,11 +1087,40 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         }
     }
 
+    Tuple *bold_font_tuple = dict_find(iterator, MESSAGE_KEY_BoldClockFont);
+    if (bold_font_tuple) {
+        bool new_val = tuple_get_int(bold_font_tuple, settings.bold_clock_font ? 1 : 0) == 1;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "settings: BoldClockFont received = %d", new_val);
+        if (new_val != settings.bold_clock_font) {
+            settings.bold_clock_font = new_val;
+            prv_save_settings();
+            set_flip_font(new_val);
+        }
+    }
+
+    Tuple *raindrops_tuple = dict_find(iterator, MESSAGE_KEY_RaindropsEnabled);
+    if (raindrops_tuple) {
+        bool new_val = tuple_get_int(raindrops_tuple, settings.raindrops_enabled ? 1 : 0) == 1;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "settings: RaindropsEnabled received = %d", new_val);
+        if (new_val != settings.raindrops_enabled) {
+            settings.raindrops_enabled = new_val;
+            prv_save_settings();
+            // Re-evaluate immediately against whatever weathercode is
+            // already known - update_weather_layout() re-runs the same
+            // settings.raindrops_enabled && icon == WEATHER_ICON_RAIN
+            // check this toggle just changed, so switching it off hides
+            // an active overlay right away rather than waiting for the
+            // next weather refresh.
+            update_weather_layout();
+        }
+    }
+
     // Unconditional, and deliberately last: cheap to call, and this way it
     // always reflects the final state of everything above in one message -
     // weather high/low, phone battery, and a UseFahrenheit change (which
-    // affects row 1's unit letter) all land correctly however many of them
-    // arrived together in this same dictionary.
+    // now recalculates row 1's H/L values via display_temp(), not just the
+    // unit letter) all land correctly however many of them arrived together
+    // in this same dictionary.
     update_stats_panel();
 }
 
@@ -897,12 +1156,71 @@ static void create_tile(int index, int x) {
     layer_add_child(s_window_layer, t->bottom_layer);
 }
 
+// Loads the clock digit font matching settings.bold_clock_font - Semilight
+// (FONT_SEGOEUISL_70, default) or Semibold (FONT_SEGOEUISB_70, same
+// underlying segoeuisb.ttf file already used at 20px for the stats panel,
+// just declared a second time in package.json at 70px). Unloads whatever
+// s_flip_font currently points at first (fine to call this at startup too,
+// since fonts_unload_custom_font() on a NULL/not-yet-set font is only ever
+// reached here after the very first load - see main_window_load()). Marks
+// both tiles' flap layers dirty afterward so a live toggle change redraws
+// immediately with the new font, without needing a flip animation.
+static void set_flip_font(bool bold) {
+    if (s_flip_font) {
+        fonts_unload_custom_font(s_flip_font);
+    }
+    s_flip_font = fonts_load_custom_font(resource_get_handle(
+        bold ? RESOURCE_ID_FONT_SEGOEUISB_70 : RESOURCE_ID_FONT_SEGOEUISL_70));
+
+    for (int i = 0; i < NUM_TILES; i++) {
+        if (s_tiles[i].top_layer) layer_mark_dirty(s_tiles[i].top_layer);
+        if (s_tiles[i].bottom_layer) layer_mark_dirty(s_tiles[i].bottom_layer);
+    }
+}
+
+// Drop-shadow trick for the five stats-panel row texts below the clock
+// island ONLY (weather H/L, steps, sleep, watch battery, phone battery) -
+// builds a black copy of `frame`, offset SHADOW_OFFSET px down-and-right,
+// matching the real layer's font/alignment so its text lines up exactly
+// except for the offset. Added to the window BEFORE the caller adds the
+// real (white) layer at the same frame, so the shadow paints first and
+// the real text sits on top of it, 2px up-and-left. Called from
+// create_stat_entry() below, once per stats-panel entry. Does not set any
+// text itself - see set_shadowed_text() below, called from
+// update_stats_panel() alongside the existing text_layer_set_text() calls
+// on the real layers.
+static TextLayer *create_shadow_text_layer(GRect frame, GFont font, GTextAlignment alignment) {
+    GRect shadow_frame = GRect(frame.origin.x + SHADOW_OFFSET, frame.origin.y + SHADOW_OFFSET,
+                                frame.size.w, frame.size.h);
+    TextLayer *shadow = text_layer_create(shadow_frame);
+    text_layer_set_background_color(shadow, GColorClear);
+    text_layer_set_text_color(shadow, GColorBlack);
+    text_layer_set_font(shadow, font);
+    text_layer_set_text_alignment(shadow, alignment);
+    layer_add_child(s_window_layer, text_layer_get_layer(shadow));
+    return shadow;
+}
+
+// Sets the same text on a shadow layer and its real layer together - used
+// everywhere one of the five shadowed stats-row layers' text is set, so
+// the two never drift out of sync. Either pointer may be NULL, though in
+// practice both are always set together by create_stat_entry().
+static void set_shadowed_text(TextLayer *shadow, TextLayer *real, const char *text) {
+    if (shadow) text_layer_set_text(shadow, text);
+    if (real) text_layer_set_text(real, text);
+}
+
 // Builds one stats-panel entry: a STATS_ICON_SIZE-square icon at (x, y),
 // with a text layer immediately to its right filling the rest of
 // total_w (used for all five icon+text pairs - row 1's full-width weather
-// entry, and the two half-width entries on each of rows 2 and 3).
+// entry, and the two half-width entries on each of rows 2 and 3). Also
+// builds that text layer's drop-shadow companion (see SHADOW_OFFSET) -
+// an identical black copy added to the window FIRST, so the real (white)
+// text layer added right after it paints on top. The icon itself is not
+// shadowed (you're handling those with a border yourself).
 static void create_stat_entry(BitmapLayer **icon_layer_out, GBitmap **icon_bitmap_out,
-                               uint32_t icon_resource_id, TextLayer **text_layer_out,
+                               uint32_t icon_resource_id,
+                               TextLayer **shadow_text_layer_out, TextLayer **text_layer_out,
                                int x, int y, int total_w) {
     *icon_layer_out = bitmap_layer_create(GRect(x, y, STATS_ICON_SIZE, STATS_ICON_SIZE));
     bitmap_layer_set_compositing_mode(*icon_layer_out, GCompOpSet);
@@ -912,7 +1230,12 @@ static void create_stat_entry(BitmapLayer **icon_layer_out, GBitmap **icon_bitma
 
     int text_x = x + STATS_ICON_SIZE + STATS_ICON_GAP;
     int text_w = total_w - STATS_ICON_SIZE - STATS_ICON_GAP;
-    *text_layer_out = text_layer_create(GRect(text_x, y, text_w, STATS_ROW_H));
+    GRect text_frame = GRect(text_x, y, text_w, STATS_ROW_H);
+
+    *shadow_text_layer_out = create_shadow_text_layer(text_frame, s_stats_font, GTextAlignmentLeft);
+    text_layer_set_overflow_mode(*shadow_text_layer_out, GTextOverflowModeTrailingEllipsis);
+
+    *text_layer_out = text_layer_create(text_frame);
     text_layer_set_background_color(*text_layer_out, GColorClear);
     text_layer_set_text_color(*text_layer_out, GColorWhite);
     text_layer_set_font(*text_layer_out, s_stats_font);
@@ -927,11 +1250,13 @@ static void main_window_load(Window *window) {
 
     window_set_background_color(window, GColorBlack);
 
-    // Custom font: trying Segoe UI Semilight at 70px (FONT_SEGOEUISL_70) in
-    // place of SonySketchEF - see the FONT note at the top of this file.
-    // To switch back, swap this for RESOURCE_ID_SONY_SKETCH_70 (that
-    // resource is still declared in package.json).
-    s_flip_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_SEGOEUISL_70));
+    // Custom font: Segoe UI Semilight or Semibold at 70px, in place of
+    // SonySketchEF - see the FONT note at the top of this file. Which one
+    // loads is user-configurable (Clay "Bold clock digits" toggle,
+    // settings.bold_clock_font) - see set_flip_font() above. To go back to
+    // the very first font tried here, swap that for RESOURCE_ID_SONY_SKETCH_70
+    // (that resource is still declared in package.json).
+    set_flip_font(settings.bold_clock_font);
 
     // Custom font for the stats panel below the housing - Segoe UI
     // Semibold at 20px, matching the panel's own 20px row height and its
@@ -1084,10 +1409,9 @@ static void main_window_load(Window *window) {
     bitmap_layer_set_compositing_mode(s_weather_icon_layer, GCompOpSet);
     layer_add_child(s_window_layer, bitmap_layer_get_layer(s_weather_icon_layer));
 
-    // Load weather icon bitmaps.
-    for (int i = 0; i < 9; i++) {
-        s_weather_bitmaps[i] = gbitmap_create_with_resource(WEATHER_RESOURCE_IDS[i]);
-    }
+    // Weather icon bitmap itself is lazy-loaded by set_weather_icon_bitmap()
+    // (called from update_weather_layout() once real weather data arrives)
+    // rather than preloaded here - see the comment on that function.
 
     // STATS PANEL - three icon+text rows below the housing (weather
     // high/low, steps + sleep, watch + phone battery), separated by two
@@ -1112,7 +1436,8 @@ static void main_window_load(Window *window) {
 
     // Row 1: WEATHER icon + today's high/low, full row width.
     create_stat_entry(&s_stats_weather_icon_layer, &s_stats_weather_icon_bitmap, RESOURCE_ID_WEATHER,
-                       &s_stats_temp_hilo_layer, stats_left, stats_row1_y, stats_w);
+                       &s_stats_temp_hilo_shadow_layer, &s_stats_temp_hilo_layer,
+                       stats_left, stats_row1_y, stats_w);
 
     s_stats_divider1_layer = layer_create(GRect(stats_divider_x, stats_divider1_y, STATS_DIVIDER_W, STATS_DIVIDER_H));
     layer_set_update_proc(s_stats_divider1_layer, stats_divider_update_proc);
@@ -1121,9 +1446,11 @@ static void main_window_load(Window *window) {
     // Row 2: STEPS (left half) + SLEEP (right half) - both read straight
     // off the watch via HealthService, see update_stats_panel().
     create_stat_entry(&s_stats_steps_icon_layer, &s_stats_steps_icon_bitmap, RESOURCE_ID_STEPS,
-                       &s_stats_steps_layer, stats_left, stats_row2_y, stats_half_w);
+                       &s_stats_steps_shadow_layer, &s_stats_steps_layer,
+                       stats_left, stats_row2_y, stats_half_w);
     create_stat_entry(&s_stats_sleep_icon_layer, &s_stats_sleep_icon_bitmap, RESOURCE_ID_SLEEP,
-                       &s_stats_sleep_layer, stats_left + stats_half_w, stats_row2_y, stats_half_w);
+                       &s_stats_sleep_shadow_layer, &s_stats_sleep_layer,
+                       stats_left + stats_half_w, stats_row2_y, stats_half_w);
 
     s_stats_divider2_layer = layer_create(GRect(stats_divider_x, stats_divider2_y, STATS_DIVIDER_W, STATS_DIVIDER_H));
     layer_set_update_proc(s_stats_divider2_layer, stats_divider_update_proc);
@@ -1132,15 +1459,34 @@ static void main_window_load(Window *window) {
     // Row 3: WATCH battery (left half, BatteryStateService) + PHONE
     // battery (right half, AppMessage from the phone's own JS).
     create_stat_entry(&s_stats_watch_icon_layer, &s_stats_watch_icon_bitmap, RESOURCE_ID_WATCH,
-                       &s_stats_watch_battery_layer, stats_left, stats_row3_y, stats_half_w);
+                       &s_stats_watch_battery_shadow_layer, &s_stats_watch_battery_layer,
+                       stats_left, stats_row3_y, stats_half_w);
     create_stat_entry(&s_stats_phone_icon_layer, &s_stats_phone_icon_bitmap, RESOURCE_ID_PHONE,
-                       &s_stats_phone_battery_layer, stats_left + stats_half_w, stats_row3_y, stats_half_w);
+                       &s_stats_phone_battery_shadow_layer, &s_stats_phone_battery_layer,
+                       stats_left + stats_half_w, stats_row3_y, stats_half_w);
+
+    // RAINDROPS overlay - created and added dead LAST, after every other
+    // layer in this entire function (background, housing, tiles, AM/PM
+    // label, weather strip, weather icon, stats panel - all of it), so
+    // it's the topmost layer in the whole window and can draw over
+    // absolutely everything else. Full-screen, same GRect as the
+    // background wallpaper. The layer itself is created empty/hidden here;
+    // its (full-screen-sized) bitmap is only actually loaded on demand by
+    // set_raindrops_visible() - see that function for why - which
+    // update_weather_layout() below calls to set the real initial state.
+    s_raindrops_layer = bitmap_layer_create(GRect(0, 0, bounds.size.w, bounds.size.h));
+    bitmap_layer_set_compositing_mode(s_raindrops_layer, GCompOpSet);
+    layer_set_hidden(bitmap_layer_get_layer(s_raindrops_layer), true);
+    layer_add_child(s_window_layer, bitmap_layer_get_layer(s_raindrops_layer));
 
     update_tiles(true);
     update_weather_layout();
     // Note: update_tiles(true) above already calls update_stats_panel()
     // internally (see TIME HANDLING section), so the panel is populated
     // as soon as this function returns without a separate call here.
+    // update_weather_layout() (called explicitly right above) also sets
+    // the raindrops overlay's real initial visibility, replacing the
+    // "start hidden" default set when it was created just above.
 }
 
 static void main_window_unload(Window *window) {
@@ -1163,34 +1509,39 @@ static void main_window_unload(Window *window) {
     text_layer_destroy(s_day_layer);
     text_layer_destroy(s_date_layer);
     bitmap_layer_destroy(s_weather_icon_layer);
-
-    for (int i = 0; i < 9; i++) {
-        if (s_weather_bitmaps[i]) gbitmap_destroy(s_weather_bitmaps[i]);
-    }
+    if (s_weather_icon_bitmap) gbitmap_destroy(s_weather_icon_bitmap);
 
     // Stats panel
     text_layer_destroy(s_stats_temp_hilo_layer);
+    text_layer_destroy(s_stats_temp_hilo_shadow_layer);
     bitmap_layer_destroy(s_stats_weather_icon_layer);
     gbitmap_destroy(s_stats_weather_icon_bitmap);
 
     text_layer_destroy(s_stats_steps_layer);
+    text_layer_destroy(s_stats_steps_shadow_layer);
     bitmap_layer_destroy(s_stats_steps_icon_layer);
     gbitmap_destroy(s_stats_steps_icon_bitmap);
 
     text_layer_destroy(s_stats_sleep_layer);
+    text_layer_destroy(s_stats_sleep_shadow_layer);
     bitmap_layer_destroy(s_stats_sleep_icon_layer);
     gbitmap_destroy(s_stats_sleep_icon_bitmap);
 
     text_layer_destroy(s_stats_watch_battery_layer);
+    text_layer_destroy(s_stats_watch_battery_shadow_layer);
     bitmap_layer_destroy(s_stats_watch_icon_layer);
     gbitmap_destroy(s_stats_watch_icon_bitmap);
 
     text_layer_destroy(s_stats_phone_battery_layer);
+    text_layer_destroy(s_stats_phone_battery_shadow_layer);
     bitmap_layer_destroy(s_stats_phone_icon_layer);
     gbitmap_destroy(s_stats_phone_icon_bitmap);
 
     layer_destroy(s_stats_divider1_layer);
     layer_destroy(s_stats_divider2_layer);
+
+    bitmap_layer_destroy(s_raindrops_layer);
+    if (s_raindrops_bitmap) gbitmap_destroy(s_raindrops_bitmap);
 
     fonts_unload_custom_font(s_flip_font);
     fonts_unload_custom_font(s_stats_font);
