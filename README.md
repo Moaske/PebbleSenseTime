@@ -1,6 +1,7 @@
 # Pebble Sense Time
 HTC Sense clock replica  with that legendary Flip Clock widget of the noughties when you could find this on both Android and Windows Mobile phones 🤖🪟
-
+<br><br>
+<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/sense_animated.gif">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_1.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_2.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_3.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_4.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_5.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_6.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/raindrops.png">
 
 ## Features
 - Large Flip Clock that follows localisation settings. Font can be setin Semi Light and Semi Bold. Minute and hour cards make a really nice flip animation on the minute/hour which you trigger at any time again with a flick of your wrist (both will then flip).
@@ -26,3 +27,5 @@ In that case: switch to another face, and then back and it will have loaded. Or 
 Compression wise there's little else I can do... 🤷
 
 ## Phone settings screen
+<br><br>
+<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/phone_settings.jpg" width="320">
