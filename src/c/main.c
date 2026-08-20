@@ -57,13 +57,16 @@
  * DIGIT_Y_NUDGE tuning below is still whatever fit SonySketchEF - expect it
  * may need a fresh pass once this is seen on real hardware.
  *
- * HOUSING: a single panel sits behind the tiles + weather strip, echoing
- * the dark "widget housing" of the original HTC design. It's drawn from
- * the CLOCK_ISLAND bitmap resource (a real ~66%-opacity black PNG) via a
- * BitmapLayer with GCompOpSet compositing - unlike a plain shape fill,
- * bitmap compositing on Pebble genuinely respects per-pixel alpha, so this
- * is real translucency, not an approximation. See the HOUSING PANEL
- * section below for the exact size the PNG needs to be.
+ * HOUSING: a panel-shaped region sits behind the tiles + weather strip,
+ * echoing the dark "widget housing" of the original HTC design. It USED to
+ * be its own always-resident CLOCK_ISLAND bitmap, alpha-composited live via
+ * GCompOpSet over whichever wallpaper was loaded - genuine per-pixel
+ * translucency, not a flat-fill approximation, but a whole separate bitmap
+ * kept in memory for the app's entire lifetime on top of the wallpaper. It's
+ * now pre-blended directly into each of the 6 wallpaper PNGs at build time
+ * instead (same final on-screen pixels, one fewer resident bitmap) - see
+ * "The housing panel is now baked into the wallpapers" in the HOUSING PANEL
+ * section below.
  */
 
 #include <pebble.h>
@@ -168,13 +171,15 @@
                             // set_shadowed_text() below.
 
 #define HOUSING_PAD 8        // gap between the housing panel edge and the tiles/weather it frames
-#define HOUSING_H 129        // CLOCK_ISLAND's actual authored height (192x129px, re-exported to
-                              // match the tile/weather row after the TILE_H shrink) - kept as an
-                              // explicit fixed value rather than derived from tile/weather
-                              // geometry, so tile-size tweaks don't silently break the
-                              // housing/PNG alignment again. Any corner rounding is baked into
-                              // that PNG's own alpha shape rather than drawn in code (no more
-                              // HOUSING_RADIUS - the panel isn't a code-drawn shape anymore).
+#define HOUSING_H 129         // Height of the housing panel region (housing_frame below) - no
+                              // longer a bitmap's own size (there's no separate housing bitmap
+                              // anymore, see the HOUSING PANEL section), just the fixed geometry
+                              // the wallpapers were baked to match and that the stats panel below
+                              // still aligns itself to. Kept as an explicit fixed value rather
+                              // than derived from tile/weather geometry, so tile-size tweaks don't
+                              // silently break the baked-wallpaper/stats-panel alignment - if
+                              // TILE_H etc. ever change, the 6 wallpaper images need re-baking to
+                              // match this constant, not just this constant updated to match them.
 
 // Stats panel: three icon+text rows below the housing (weather high/low,
 // steps + sleep, watch + phone battery), separated by two centered 1px
@@ -226,11 +231,19 @@ typedef struct {
 
 typedef struct {
     bool use_fahrenheit;
-    int wallpaper_index;   // which HTC_WALLPAPER0N is the active background (0-4)
+    int wallpaper_index;   // which HTC_WALLPAPER0N is the active background (0-5)
     bool bold_clock_font;  // false = Segoe UI Semilight (FONT_SEGOEUISL_70, default),
                             // true = Segoe UI Semibold (FONT_SEGOEUISB_70)
     bool raindrops_enabled;   // default true - gates the RAINDROPS overlay alongside the
                                 // existing weathercode==6 check, see update_weather_layout()
+    int weather_update_interval_min;   // how often tick_handler() requests a weather refresh,
+                                         // in minutes - one of {15, 30, 60}, default 30. Added
+                                         // at the END of the struct (see prv_load_settings()
+                                         // comment) so upgrading users with an old persisted
+                                         // blob still load fine; persist_read_data() only
+                                         // overwrites as many bytes as the OLD saved blob had,
+                                         // leaving this field at its prv_default_settings()
+                                         // value (30) until they open the settings page again.
 } ClaySettings;
 
 #define SETTINGS_KEY 1
@@ -244,8 +257,16 @@ static Layer *s_window_layer;
 static BitmapLayer *s_background_layer; // full-screen wallpaper, drawn behind everything else
 static GBitmap *s_background_bitmap;    // the currently-selected HTC_WALLPAPER0N - see
                                          // BACKGROUND WALLPAPER section below
-static BitmapLayer *s_housing_layer; // big backing panel framing the tiles + weather strip
-static GBitmap *s_housing_bitmap;    // CLOCK_ISLAND - see the HOUSING PANEL section below
+
+// There's no separate s_housing_layer/s_housing_bitmap anymore - the housing
+// panel (formerly CLOCK_ISLAND, its own always-resident GBitmap) is now
+// pre-blended directly into each of the 5 HTC_WALLPAPER0N images at build
+// time, so s_background_bitmap alone covers both. See "The housing panel is
+// now baked into the wallpapers" in the HOUSING PANEL section below for why
+// and how - this removed an entire permanently-resident bitmap (~24.8KB
+// decoded) from the app's steady-state memory footprint for free, since the
+// wallpaper already has to be resident whenever anything is on screen
+// anyway.
 
 static FlipTile s_tiles[NUM_TILES];
 static AppTimer *s_anim_timer = NULL;
@@ -305,13 +326,15 @@ static const uint32_t WEATHER_RESOURCE_IDS[9] = {
 static BitmapLayer *s_raindrops_layer;
 static GBitmap *s_raindrops_bitmap;
 
-#define NUM_WALLPAPERS 5
+#define NUM_WALLPAPERS 6
 static const uint32_t WALLPAPER_RESOURCE_IDS[NUM_WALLPAPERS] = {
     RESOURCE_ID_HTC_WALLPAPER01,
     RESOURCE_ID_HTC_WALLPAPER02,
     RESOURCE_ID_HTC_WALLPAPER03,
     RESOURCE_ID_HTC_WALLPAPER04,
-    RESOURCE_ID_HTC_WALLPAPER05
+    RESOURCE_ID_HTC_WALLPAPER05,
+    RESOURCE_ID_HTC_WALLPAPER06   // "Arrows" - added along with the housing-crop fix, see
+                                    // "The housing panel is now baked into the wallpapers" below
 };
 
 // Stats panel state - see the STATS PANEL layout constants above and the
@@ -375,6 +398,7 @@ static void prv_default_settings(void) {
     settings.wallpaper_index = 0;   // HTC_WALLPAPER01
     settings.bold_clock_font = false;   // Semilight
     settings.raindrops_enabled = true;
+    settings.weather_update_interval_min = 30;
 }
 
 static void prv_save_settings(void) {
@@ -451,19 +475,20 @@ static void bottom_flap_update_proc(Layer *layer, GContext *ctx) {
 // BACKGROUND WALLPAPER (behind the housing panel, tiles, and weather strip)
 // ============================================================================
 
-// A full-screen (200x228 on emery) opaque background image, one of the five
+// A full-screen (200x228 on emery) opaque background image, one of the six
 // HTC_WALLPAPER0N resources, picked on the phone's settings page and stored
-// in settings.wallpaper_index (0-4). Unlike the 9 small weather icons (which
+// in settings.wallpaper_index (0-5). Unlike the 9 small weather icons (which
 // are cheap enough to keep all preloaded), a full-screen color PNG is much
 // bigger, so only the currently-selected one is ever loaded into memory at a
 // time - set_background_wallpaper() destroys the old GBitmap before loading
 // the new one, both at startup and whenever the setting changes.
 //
-// This layer is added to s_window_layer FIRST, before the housing panel, so
-// it sits at the very back - the housing's translucent CLOCK_ISLAND bitmap
-// composites over it (GCompOpSet), and this is also what makes it possible
-// to visually check the housing PNG's position/size against a real
-// background instead of the plain black window fill used until now.
+// This layer is added to s_window_layer FIRST, so it sits at the very back.
+// It no longer needs a separate housing panel compositing over it at
+// runtime - the housing is baked directly into each wallpaper PNG now (see
+// "The housing panel is now baked into the wallpapers" below) - but the
+// wallpaper still has to render behind the tiles/weather/stats panel, so it
+// stays the first (bottom-most) layer added regardless.
 static void set_background_wallpaper(int index) {
     if (index < 0 || index >= NUM_WALLPAPERS) index = 0;
 
@@ -502,29 +527,67 @@ static void set_background_wallpaper(int index) {
 // HOUSING PANEL (behind the tiles + weather strip)
 // ============================================================================
 
-// The housing panel is the CLOCK_ISLAND bitmap resource (a real ~66%-
-// opacity black PNG), drawn via a BitmapLayer with GCompOpSet compositing
-// in main_window_load() below - there's no update_proc / custom drawing
-// code for it, unlike the tiles.
+// There is no housing bitmap, BitmapLayer, or update_proc here anymore -
+// this section is now just geometry (housing_frame, computed in
+// main_window_load() and used to align the stats panel below it) plus this
+// comment explaining where the actual pixels went.
 //
-// This replaces an earlier flat-fill version. Pebble's shape fills
-// (graphics_fill_rect() etc.) do NOT alpha-blend against existing
-// framebuffer content - the SDK docs are explicit that the alpha channel
-// "only affects the bitmap drawing operations... it currently does not
-// affect the filling or stroking operations" - so a translucent GColor
-// fill rendered identically to an opaque one. Bitmap compositing
-// (GCompOpSet) is different: it DOES respect per-pixel alpha, so as long
-// as CLOCK_ISLAND's own alpha channel is genuinely translucent, this is
-// real ~66% opacity, not an approximation.
+// ORIGINALLY: the housing panel was its own CLOCK_ISLAND bitmap resource (a
+// real ~66%-opacity black PNG), drawn via a BitmapLayer with GCompOpSet
+// compositing over whichever wallpaper was loaded. That compositing mode
+// choice mattered: Pebble's shape fills (graphics_fill_rect() etc.) do NOT
+// alpha-blend against existing framebuffer content - the SDK docs are
+// explicit that the alpha channel "only affects the bitmap drawing
+// operations... it currently does not affect the filling or stroking
+// operations" - so a translucent GColor fill rendered identically to an
+// opaque one. Bitmap compositing (GCompOpSet) is different: it DOES respect
+// per-pixel alpha, so as long as CLOCK_ISLAND's own alpha channel was
+// genuinely translucent, this was real ~66% opacity, not an approximation.
 //
-// SIZE: for pixel-perfect alignment, CLOCK_ISLAND should exactly match the
-// housing panel's rendered frame - 192x129px on emery. The frame's height
-// comes directly from the fixed HOUSING_H constant (not derived from tile/
-// weather geometry) specifically so it stays matched to the actual bitmap
-// regardless of future tile-size tweaks - see the HOUSING_H comment above.
-// Pebble's BitmapLayer does NOT auto-scale bitmaps to fit their frame - a
-// mismatched PNG will just render at its own native size, centered in the
-// frame, rather than stretching/shrinking to cover it.
+// THE HOUSING PANEL IS NOW BAKED INTO THE WALLPAPERS: since the housing
+// always sits directly on top of the wallpaper and nothing else - the
+// tiles/weather/text all draw ABOVE both of them, and the housing's own
+// position/size never changes at runtime - alpha-compositing CLOCK_ISLAND
+// over each wallpaper is fully reproducible offline, pixel for pixel. All 6
+// `resources/images/htc_wallpaper0N.png` files now have the housing panel
+// pre-blended directly into them (at the same 64-color/4-level-alpha
+// treatment described in "Fixed: PNG decode out-of-memory" above), so
+// loading the current wallpaper is now the ONLY bitmap load needed to show
+// both - CLOCK_ISLAND itself is gone from resources/images/ and
+// package.json entirely, and with it an entire GBitmap (~24.8KB decoded)
+// that used to sit permanently resident for the app's whole lifetime on top
+// of whichever wallpaper was also loaded. Net effect: same pixels on
+// screen, one fewer bitmap in memory at all times, and (since HTC_WALLPAPER
+// files still went through the same lossless `optipng` pass as everything
+// else) most of the wallpaper files came out the same size or SMALLER
+// than the un-blended versions - the housing panel's flat ~66%-dark
+// overlay tends to reduce local color variance in that region of an
+// already-busy wallpaper, which compresses better, not worse.
+//
+// SIZE / ALIGNMENT, FIXED (was 188px wide vs. CLOCK_ISLAND's original
+// 192px): figuring out the exact bake position for the FIRST version of
+// this baking pass surfaced a real pre-existing quirk, worth recording
+// since it's not obvious from the Pebble docs alone. housing_frame is
+// 188x129 (content_w + HOUSING_PAD*2 x HOUSING_H = 172+16 x 129), but the
+// original CLOCK_ISLAND art was authored at 192x129 - 4px wider than the
+// frame it was ever actually drawn into. Pebble's BitmapLayer does NOT
+// auto-scale a mismatched bitmap to its frame, and (checked against
+// Pebble's own bitmap_layer.c source, since the hosted docs don't spell
+// this out) defaults to GAlignTopLeft, not GAlignCenter, when
+// bitmap_layer_set_alignment() is never called - which this project never
+// did. Combined with graphics_draw_bitmap_in_rect()'s documented behavior
+// of clipping (not scaling) a bitmap larger than its target rect, the real
+// on-device result was CLOCK_ISLAND anchored at the frame's top-left
+// corner with its rightmost 4 columns silently clipped off - not centered,
+// and not resampled. The first bake reproduced that exact crop (matching
+// what was already rendering rather than accidentally changing it), and I
+// called the resulting 4px asymmetry "invisible in practice" - wrong: you
+// noticed it right away once a real background was behind it, showing up
+// as a visibly uneven margin between the panel's right edge and the
+// screen edge versus the left. Fixed properly this time by re-authoring
+// CLOCK_ISLAND at the correct 188x129 straight away (no crop needed at
+// all now - the source art matches housing_frame exactly), then re-baking
+// all 6 wallpapers against it.
 
 // ============================================================================
 // FLIP ANIMATION DRIVER
@@ -765,8 +828,16 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     // ticks that's just the MM tile; HH only flips on the hour.
     update_tiles(false);
 
-    // Refresh weather every 30 minutes.
-    if (tick_time->tm_min % 30 == 0) {
+    // Refresh weather every settings.weather_update_interval_min minutes
+    // (Clay "Weather update interval" select - 15/30/60, default 30). Guard
+    // against a corrupt/unset value (e.g. 0, which would make % a divide-by-
+    // zero) by falling back to 30 - this mirrors the same defensive pattern
+    // inbox_received_callback() uses when validating the incoming tuple.
+    int interval_min = settings.weather_update_interval_min;
+    if (interval_min != 15 && interval_min != 30 && interval_min != 60) {
+        interval_min = 30;
+    }
+    if (tick_time->tm_min % interval_min == 0) {
         DictionaryIterator *iter;
         if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
             dict_write_uint8(iter, MESSAGE_KEY_REQUEST_WEATHER, 1);
@@ -985,7 +1056,7 @@ static void update_stats_panel(void) {
     static char phone_batt_buf[8];
     if (s_has_phone_battery) {
         snprintf(phone_batt_buf, sizeof(phone_batt_buf), "%d%%%s", s_phone_battery_percent,
-                  s_phone_charging ? "+" : "");
+                  s_phone_charging ? "↑" : "");
     } else {
         snprintf(phone_batt_buf, sizeof(phone_batt_buf), "--");
     }
@@ -1112,6 +1183,20 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
             // an active overlay right away rather than waiting for the
             // next weather refresh.
             update_weather_layout();
+        }
+    }
+
+    Tuple *interval_tuple = dict_find(iterator, MESSAGE_KEY_WeatherUpdateInterval);
+    if (interval_tuple) {
+        int new_val = tuple_get_int(interval_tuple, settings.weather_update_interval_min);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "settings: WeatherUpdateInterval received = %d", new_val);
+        // Only 15/30/60 are ever offered by the Clay select - reject
+        // anything else rather than persist a value that would make
+        // tick_handler()'s modulo check behave oddly.
+        if ((new_val == 15 || new_val == 30 || new_val == 60) &&
+            new_val != settings.weather_update_interval_min) {
+            settings.weather_update_interval_min = new_val;
+            prv_save_settings();
         }
     }
 
@@ -1273,33 +1358,39 @@ static void main_window_load(Window *window) {
     int weather_y = TILE_Y + TILE_H - WEATHER_OVERLAP + WEATHER_Y_NUDGE;
     int tile_row_right = x1 + TILE_W;   // right edge of the MM tile, for right-aligning the temp
 
-    // Background wallpaper - added FIRST, before even the housing panel, so
-    // it's the very bottom-most layer (see BACKGROUND WALLPAPER section
-    // above). Covers the full screen; the actual bitmap is loaded by
-    // set_background_wallpaper() based on the persisted setting.
+    // Background wallpaper - added FIRST, so it's the very bottom-most
+    // layer (see BACKGROUND WALLPAPER section above). Covers the full
+    // screen; the actual bitmap is loaded by set_background_wallpaper()
+    // based on the persisted setting. This single bitmap now ALSO carries
+    // the housing panel - see "The housing panel is now baked into the
+    // wallpapers" below - so there's no separate housing layer added after
+    // this one the way there used to be.
     s_background_layer = bitmap_layer_create(GRect(0, 0, bounds.size.w, bounds.size.h));
     layer_add_child(s_window_layer, bitmap_layer_get_layer(s_background_layer));
     set_background_wallpaper(settings.wallpaper_index);
 
-    // Housing panel - added next so it renders behind the tiles/weather but
-    // in front of the wallpaper, framing the tiles + weather strip as one
-    // unit like the original HTC widget (see the HOUSING PANEL section
-    // above for how CLOCK_ISLAND is composited). SIZE NOTE: the height
-    // comes from the fixed HOUSING_H constant (matching CLOCK_ISLAND's
-    // actual 192x129px size) rather than being derived from the tile/
-    // weather geometry above, so it stays correctly matched to the bitmap
-    // even as TILE_H etc. get tuned.
+    // housing_frame: NOT a bitmap/layer anymore (see the HOUSING PANEL
+    // section above) - kept purely as a geometry reference. The stats panel
+    // below still aligns itself to the housing's own left/right edges and
+    // bottom edge (housing_frame.origin.x/size.w and
+    // housing_frame.origin.y + HOUSING_H, used further down this function),
+    // which is exactly what this GRect describes - just without ever
+    // creating a bitmap for it anymore, since that same box of pixels is
+    // now already part of whichever wallpaper is loaded above. SIZE NOTE:
+    // the height still comes from the fixed HOUSING_H constant (matching
+    // the housing source art's 188x129px size exactly - see "The housing
+    // panel is now baked into the wallpapers" for the earlier 192-vs-188
+    // mismatch this replaced) rather than being derived from the tile/
+    // weather geometry above, so it stays correctly matched to how the
+    // wallpapers were actually baked even as TILE_H etc. get tuned - if
+    // that ever changes, all 6 wallpaper images need re-baking to match,
+    // not just this constant.
     GRect housing_frame = GRect(
         x0 - HOUSING_PAD,
         TILE_Y - HOUSING_PAD,
         content_w + HOUSING_PAD * 2,
         HOUSING_H
     );
-    s_housing_bitmap = gbitmap_create_with_resource(RESOURCE_ID_CLOCK_ISLAND);
-    s_housing_layer = bitmap_layer_create(housing_frame);
-    bitmap_layer_set_compositing_mode(s_housing_layer, GCompOpSet);
-    bitmap_layer_set_bitmap(s_housing_layer, s_housing_bitmap);
-    layer_add_child(s_window_layer, bitmap_layer_get_layer(s_housing_layer));
 
     create_tile(TILE_HOUR, x0);
     create_tile(TILE_MINUTE, x1);
@@ -1511,9 +1602,8 @@ static void main_window_unload(Window *window) {
         s_tiles[i].top_layer = NULL;
         s_tiles[i].bottom_layer = NULL;
     }
-    bitmap_layer_destroy(s_housing_layer);
-    gbitmap_destroy(s_housing_bitmap);
-
+    // No separate housing bitmap/layer to destroy here anymore - baked into
+    // s_background_bitmap now, cleaned up by the destroy call right below.
     bitmap_layer_destroy(s_background_layer);
     if (s_background_bitmap) gbitmap_destroy(s_background_bitmap);
 

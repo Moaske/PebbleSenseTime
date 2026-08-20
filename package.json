@@ -27,11 +27,24 @@
             "PHONE_BATTERY",
             "PHONE_CHARGING",
             "BoldClockFont",
-            "RaindropsEnabled"
+            "RaindropsEnabled",
+            "WeatherUpdateInterval"
         ],
         "projectType": "native",
         "resources": {
             "media": [
+                {
+                    "file": "images/htc_wallpaper06.png",
+                    "name": "HTC_WALLPAPER06",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/htc_wallpaper01.png",
+                    "name": "HTC_WALLPAPER01",
+                    "targetPlatforms": null,
+                    "type": "bitmap"
+                },
                 {
                     "file": "images/wx_snow.png",
                     "name": "IMAGE_WX_SNOW",
@@ -105,20 +118,8 @@
                     "type": "font"
                 },
                 {
-                    "file": "images/clock_island.png",
-                    "name": "CLOCK_ISLAND",
-                    "targetPlatforms": null,
-                    "type": "bitmap"
-                },
-                {
                     "file": "images/htc_wallpaper05.png",
                     "name": "HTC_WALLPAPER05",
-                    "targetPlatforms": null,
-                    "type": "bitmap"
-                },
-                {
-                    "file": "images/htc_wallpaper01.png",
-                    "name": "HTC_WALLPAPER01",
                     "targetPlatforms": null,
                     "type": "bitmap"
                 },
@@ -215,5 +216,5 @@
             "watchface": true
         }
     },
-    "version": "1.0.6"
+    "version": "1.1.0"
 }

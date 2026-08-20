@@ -1,12 +1,15 @@
 /**
  * PebbleKit JS companion for the HTC Flip Clock watchface.
  *
- * - Uses Clay (@rebble/clay) for the settings page (units + background
- *   wallpaper). The wallpaper picker is a stock Clay "select" dropdown
- *   (messageKey "Wallpaper", values 0-4) with a "text" item right below it
- *   showing all 5 thumbnails inline as reference - same pattern used in the
- *   Hackers95 watchface, since stock Clay has no built-in image-radio
- *   component.
+ * - Uses Clay (@rebble/clay) for the settings page (units, weather refresh
+ *   interval, clock style, and background wallpaper). The wallpaper picker
+ *   is a stock Clay "select" dropdown (messageKey "Wallpaper", values 0-5)
+ *   with a "text" item right below it showing all 6 thumbnails inline as
+ *   reference, laid out 3-per-row - same pattern used in the Hackers95
+ *   watchface, since stock Clay has no built-in image-radio component. The
+ *   Background section is deliberately last on the settings page (below
+ *   Units/Weather/Clock) since its thumbnail grid is the tallest part of
+ *   the page.
  * - Location is fully automatic: the phone's own GPS (via
  *   navigator.geolocation) supplies latitude/longitude, which are used
  *   directly for the Open-Meteo Forecast API call (no separate geocoding
@@ -41,6 +44,7 @@ var DEFAULT_FAHRENHEIT = false;
 var DEFAULT_WALLPAPER = 0;
 var DEFAULT_BOLD_CLOCK_FONT = false;
 var DEFAULT_RAINDROPS_ENABLED = true;
+var DEFAULT_WEATHER_UPDATE_INTERVAL = 30;
 var FALLBACK_LOCATION_NAME = '----';
 
 // ----------------------------------------------------------------------
@@ -76,11 +80,14 @@ function loadSettings() {
   var boldClockFont = storedBoldClockFont === null ? DEFAULT_BOLD_CLOCK_FONT : (storedBoldClockFont === 'true');
   var storedRaindropsEnabled = localStorage.getItem('RaindropsEnabled');
   var raindropsEnabled = storedRaindropsEnabled === null ? DEFAULT_RAINDROPS_ENABLED : (storedRaindropsEnabled === 'true');
+  var storedWeatherUpdateInterval = localStorage.getItem('WeatherUpdateInterval');
+  var weatherUpdateInterval = storedWeatherUpdateInterval === null ? DEFAULT_WEATHER_UPDATE_INTERVAL : parseInt(storedWeatherUpdateInterval, 10);
   return {
     useFahrenheit: useFahrenheit,
     wallpaper: wallpaper,
     boldClockFont: boldClockFont,
-    raindropsEnabled: raindropsEnabled
+    raindropsEnabled: raindropsEnabled,
+    weatherUpdateInterval: weatherUpdateInterval
   };
 }
 
@@ -96,6 +103,9 @@ function saveSettings(dict) {
   }
   if (typeof dict.RaindropsEnabled !== 'undefined') {
     localStorage.setItem('RaindropsEnabled', dict.RaindropsEnabled ? 'true' : 'false');
+  }
+  if (typeof dict.WeatherUpdateInterval !== 'undefined') {
+    localStorage.setItem('WeatherUpdateInterval', dict.WeatherUpdateInterval);
   }
 }
 
