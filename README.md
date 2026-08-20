@@ -6,7 +6,7 @@ Current version: 1.0.6 💾 https://apps.repebble.com/sense-time_9b7ac780780d485
 <img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/sense_animated.gif">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_1.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_2.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_3.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_4.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_5.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_6.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/raindrops.png">
 
 ## Features
-- Large Flip Clock that follows localisation settings. Font can be setin Semi Light and Semi Bold. Minute and hour cards make a really nice flip animation on the minute/hour which you trigger at any time again with a flick of your wrist (both will then flip).
+- Large Flip Clock that follows localisation settings. Font can be set in Semi Light and Semi Bold font. Minute and hour cards make a really nice flip animation on the minute/hour which you trigger at any time again with a flick of your wrist (both will then flip).
 - Location based weather (Open Meteo) with icon, current temperature and (current) location name below the clock.
 - On the right side of that the Weekday and Date. These follow the watch language settings (supports: en/fr/de/es/it/nl/pt).
 
