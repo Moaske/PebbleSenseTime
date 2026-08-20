@@ -27,5 +27,4 @@ In that case: switch to another face, and then back and it will have loaded. Or 
 Compression wise there's little else I can do... 🤷
 
 ## Phone settings screen
-<br><br>
-<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/phone_settings.jpg" width="320">
+<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/sensetime_settings.png" width="320">
