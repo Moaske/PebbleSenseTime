@@ -281,7 +281,16 @@ function fetchWeather() {
   navigator.geolocation.getCurrentPosition(function (pos) {
     var lat = pos.coords.latitude;
     var lon = pos.coords.longitude;
-    console.log('Got position: ' + lat + ',' + lon);
+    // Logging accuracy (meters) alongside the fix itself so we can check
+    // whether a low-precision network/cell fix (rather than a real GPS
+    // lock) is why the reported weather sometimes doesn't match the
+    // reported location - BigDataCloud's city-level lookup tolerates a
+    // few km of error fine, but Open-Meteo's forecast is read off a
+    // specific model grid cell, so the same slack can land it in the
+    // wrong cell. enableHighAccuracy is currently false and fixes up to
+    // 10 minutes old are reused (see the getCurrentPosition() options
+    // below), both of which favor battery life over precision.
+    console.log('Got position: ' + lat + ',' + lon + ' (accuracy: ' + pos.coords.accuracy + 'm)');
 
     reverseGeocode(lat, lon, function (locationName) {
       fetchForecastAndSend(lat, lon, locationName);

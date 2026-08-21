@@ -410,6 +410,76 @@ static void prv_load_settings(void) {
     persist_read_data(SETTINGS_KEY, &settings, sizeof(settings));
 }
 
+// ----------------------------------------------------------------------
+// Weather now persists across watchface reloads
+// ----------------------------------------------------------------------
+// Pebble watchfaces aren't backgrounded like a phone app - leaving the
+// watchface for the app menu (or any other app) and coming back re-runs
+// init() from scratch, so every static global (including s_has_weather/
+// s_temperature/s_weather_icon/s_location_name/s_temp_high/s_temp_low)
+// used to reset to its zero-value default every single time. That made
+// update_weather_layout() blank the weather strip (and update_stats_panel()
+// show "--" for H/L) on every return to the watchface, until a brand new
+// REQUEST_WEATHER round-trip (GPS + two HTTPS calls on the phone) came
+// back - a multi-second blank/placeholder state on every single return,
+// even though the watch already knew perfectly good, only-slightly-stale
+// weather data moments earlier.
+//
+// Fixed by caching the last-known weather reading in persistent storage
+// (a separate key from SETTINGS_KEY, so this can't ever collide with or
+// disturb ClaySettings' own append-only layout) - prv_load_weather_cache()
+// runs in init(), before window_stack_push() ever triggers
+// main_window_load(), so by the time update_weather_layout()/
+// update_stats_panel() run for the very first time, s_has_weather and
+// friends already hold the last real reading and paint immediately -
+// stale by however long the watchface was away, but never blank. The
+// normal refresh path is untouched: inbox_received_callback() still
+// updates the same statics and repaints the instant a fresh AppMessage
+// arrives from the phone, exactly as before - this only changes what's
+// shown before that first fresh update lands.
+typedef struct {
+    bool has_weather;
+    int temperature;         // Celsius, same convention as s_temperature
+    int weather_icon;
+    char location_name[32];  // matches sizeof(s_location_name)
+    int temp_high;            // Celsius
+    int temp_low;              // Celsius
+} WeatherCache;
+
+#define WEATHER_CACHE_KEY 2   // deliberately != SETTINGS_KEY (1)
+
+static void prv_save_weather_cache(void) {
+    WeatherCache cache;
+    cache.has_weather = s_has_weather;
+    cache.temperature = s_temperature;
+    cache.weather_icon = s_weather_icon;
+    cache.temp_high = s_temp_high;
+    cache.temp_low = s_temp_low;
+    snprintf(cache.location_name, sizeof(cache.location_name), "%s", s_location_name);
+    persist_write_data(WEATHER_CACHE_KEY, &cache, sizeof(cache));
+}
+
+static void prv_load_weather_cache(void) {
+    // persist_exists() guards this explicitly (rather than the
+    // default-then-unconditional-overlay pattern prv_load_settings() uses)
+    // because there's no "default" WeatherCache worth overlaying blindly -
+    // on a brand new watch, or before the very first weather fetch ever
+    // completes, s_has_weather's own static initializer (false) is already
+    // exactly the right fallback, and skipping the read entirely avoids
+    // ever copying a zeroed/garbage location_name over the top of it.
+    if (!persist_exists(WEATHER_CACHE_KEY)) return;
+
+    WeatherCache cache;
+    if (persist_read_data(WEATHER_CACHE_KEY, &cache, sizeof(cache)) != (int)sizeof(cache)) return;
+
+    s_has_weather = cache.has_weather;
+    s_temperature = cache.temperature;
+    s_weather_icon = cache.weather_icon;
+    s_temp_high = cache.temp_high;
+    s_temp_low = cache.temp_low;
+    snprintf(s_location_name, sizeof(s_location_name), "%s", cache.location_name);
+}
+
 // ============================================================================
 // FLIP TILE DRAWING
 // ============================================================================
@@ -1120,6 +1190,11 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     }
     if (weather_changed) {
         update_weather_layout();
+        // Cache the fresh reading so the NEXT time this watchface loads
+        // (e.g. after a trip to the app menu) it can paint immediately
+        // from this instead of blanking until a new AppMessage arrives -
+        // see "Weather now persists across watchface reloads" above.
+        prv_save_weather_cache();
     }
 
     // Phone battery - see s_has_phone_battery/initPhoneBattery() notes above.
@@ -1658,6 +1733,13 @@ static void main_window_unload(Window *window) {
 
 static void init(void) {
     prv_load_settings();
+    // Must happen before window_stack_push() below - main_window_load()
+    // calls update_weather_layout()/update_stats_panel() at the very end
+    // of itself, and this is what makes those calls have real (if
+    // possibly stale) data to show on the very first paint instead of
+    // blanking. See "Weather now persists across watchface reloads",
+    // just above prv_load_settings()/prv_load_weather_cache() themselves.
+    prv_load_weather_cache();
 
     s_main_window = window_create();
     window_set_window_handlers(s_main_window, (WindowHandlers) {
