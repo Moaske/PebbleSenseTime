@@ -105,8 +105,11 @@
 #define TILE_HOUR 0
 #define TILE_MINUTE 1
 
-#define AMPM_INSET 4    // AM/PM label sits this many px clear of the MM tile's own right and
-                          // bottom edges - only shown in 12h mode (clock_is_24h_style())
+#define AMPM_INSET 4          // AM/PM label sits this many px clear of the MM tile's own right
+                                // edge - only shown in 12h mode (clock_is_24h_style())
+#define AMPM_INSET_BOTTOM 2   // ...and this many px clear of the tile's bottom edge - its own
+                                // constant (rather than reusing AMPM_INSET) so the label can be
+                                // nudged up/down without also shifting it sideways
 #define AMPM_W 26
 #define AMPM_H 16
 
@@ -1472,11 +1475,12 @@ static void main_window_load(Window *window) {
 
     // AM/PM label - added right after the tiles so it draws on top of the
     // MM tile's bottom-right corner, inset AMPM_INSET px from that tile's
-    // own right and bottom edges. Text is set by update_ampm_label() (only
-    // non-empty in 12h mode), called from update_tiles() below.
+    // own right edge and AMPM_INSET_BOTTOM px from its bottom edge. Text is
+    // set by update_ampm_label() (only non-empty in 12h mode), called from
+    // update_tiles() below.
     GRect ampm_frame = GRect(
         x1 + TILE_W - AMPM_INSET - AMPM_W,
-        TILE_Y + TILE_H - AMPM_INSET - AMPM_H,
+        TILE_Y + TILE_H - AMPM_INSET_BOTTOM - AMPM_H,
         AMPM_W,
         AMPM_H
     );
