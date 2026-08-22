@@ -1,7 +1,7 @@
 # Pebble Sense Time
 HTC Sense clock replica  with that legendary Flip Clock widget of the noughties when you could find this on both Android and Windows Mobile phones 🤖🪟
 
-Current version: 1.1.1 💾 https://apps.repebble.com/sense-time_9b7ac780780d485ba043c9d0
+Current version: 1.1.3 💾 https://apps.repebble.com/sense-time_9b7ac780780d485ba043c9d0
 <br><br>
 <img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/sense_animated.gif">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_1.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_2.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_3.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_4.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_5.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/main_6.png">&nbsp;&nbsp;&nbsp;<img src="https://github.com/Moaske/PebbleSenseTime/blob/main/docs/raindrops.png">
 
