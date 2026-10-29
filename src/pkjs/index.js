@@ -45,6 +45,7 @@ var DEFAULT_WALLPAPER = 0;
 var DEFAULT_BOLD_CLOCK_FONT = false;
 var DEFAULT_RAINDROPS_ENABLED = true;
 var DEFAULT_WEATHER_UPDATE_INTERVAL = 30;
+var DEFAULT_DARK_MODE = false;
 var FALLBACK_LOCATION_NAME = '----';
 
 // ----------------------------------------------------------------------
@@ -82,12 +83,15 @@ function loadSettings() {
   var raindropsEnabled = storedRaindropsEnabled === null ? DEFAULT_RAINDROPS_ENABLED : (storedRaindropsEnabled === 'true');
   var storedWeatherUpdateInterval = localStorage.getItem('WeatherUpdateInterval');
   var weatherUpdateInterval = storedWeatherUpdateInterval === null ? DEFAULT_WEATHER_UPDATE_INTERVAL : parseInt(storedWeatherUpdateInterval, 10);
+  var storedDarkMode = localStorage.getItem('DarkMode');
+  var darkMode = storedDarkMode === null ? DEFAULT_DARK_MODE : (storedDarkMode === 'true');
   return {
     useFahrenheit: useFahrenheit,
     wallpaper: wallpaper,
     boldClockFont: boldClockFont,
     raindropsEnabled: raindropsEnabled,
-    weatherUpdateInterval: weatherUpdateInterval
+    weatherUpdateInterval: weatherUpdateInterval,
+    darkMode: darkMode
   };
 }
 
@@ -106,6 +110,9 @@ function saveSettings(dict) {
   }
   if (typeof dict.WeatherUpdateInterval !== 'undefined') {
     localStorage.setItem('WeatherUpdateInterval', dict.WeatherUpdateInterval);
+  }
+  if (typeof dict.DarkMode !== 'undefined') {
+    localStorage.setItem('DarkMode', dict.DarkMode ? 'true' : 'false');
   }
 }
 

@@ -77,6 +77,21 @@ module.exports = [
     "items": [
       {
         "type": "heading",
+        "defaultValue": "Appearance"
+      },
+      {
+        "type": "toggle",
+        "messageKey": "DarkMode",
+        "label": "Dark mode (inverts the flip clock card colours)",
+        "defaultValue": false
+      }
+    ]
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
         "defaultValue": "Background"
       },
       {

@@ -247,6 +247,11 @@ typedef struct {
                                          // overwrites as many bytes as the OLD saved blob had,
                                          // leaving this field at its prv_default_settings()
                                          // value (30) until they open the settings page again.
+    bool dark_mode;   // default false (light mode). Flips the flip-tile color scheme - see
+                       // tile_fill_color()/tile_outline_color()/tile_text_color() below the
+                       // FLIP TILE DRAWING section header - and the AM/PM label's text color.
+                       // Also appended at the end for the same backward-compatible reason as
+                       // weather_update_interval_min above.
 } ClaySettings;
 
 #define SETTINGS_KEY 1
@@ -402,6 +407,7 @@ static void prv_default_settings(void) {
     settings.bold_clock_font = false;   // Semilight
     settings.raindrops_enabled = true;
     settings.weather_update_interval_min = 30;
+    settings.dark_mode = false;   // light mode by default
 }
 
 static void prv_save_settings(void) {
@@ -501,18 +507,70 @@ static void prv_load_weather_cache(void) {
 // NOT pre-rendering the new value behind the animating flap, since that
 // would let it peek through before the flip completes and undercut the
 // effect.
-static void draw_flap(GContext *ctx, FlipTile *t, GRect bounds, int y_offset, GCornerMask corners) {
+//
+// Colors (light mode default / dark mode via the Clay "Dark Mode" toggle,
+// settings.dark_mode): light mode draws both flaps plain white; dark mode
+// draws both flaps plain black. (An earlier version gave the bottom flap
+// a slightly darker/lighter shade than the top in each mode, but on real
+// hardware the two-shade difference read as too strong - the 1px outline
+// around each flap, including its flat crease-side edge, is already
+// enough to separate the two halves visually, so both flaps now just
+// match the mode's base color.) The 1px outline (see below) is
+// GColorBlack in light mode / GColorLightGray in dark mode, and the digit
+// text (plus the AM/PM label - see its own text_layer_set_text_color()
+// call in main_window_load()/apply_dark_mode()) is GColorBlack in light
+// mode / GColorWhite in dark mode. Every one of these is read fresh on
+// each redraw rather than cached, so a live toggle just needs the flap
+// layers marked dirty (see apply_dark_mode()) to repaint correctly - no
+// other state to update. is_bottom is kept as a parameter (currently
+// unused here) in case a future tweak wants the two flaps to diverge
+// again.
+static GColor tile_fill_color(bool is_bottom) {
+    (void)is_bottom;
+    return settings.dark_mode ? GColorBlack : GColorWhite;
+}
+
+static GColor tile_outline_color(void) {
+    return settings.dark_mode ? GColorLightGray : GColorBlack;
+}
+
+static GColor tile_text_color(void) {
+    return settings.dark_mode ? GColorWhite : GColorBlack;
+}
+
+static void draw_flap(GContext *ctx, FlipTile *t, GRect bounds, int y_offset, GCornerMask corners,
+                       bool is_bottom) {
     if (bounds.size.h <= 0) return;
 
-    graphics_context_set_fill_color(ctx, GColorWhite);
+    // 1px outline around the flap's own rect (all four sides, including
+    // the flat crease-side edge - this is a complete border per flap, not
+    // just the rounded outer edge). Pebble's graphics API has no stroked
+    // rounded-rect primitive that accepts a GCornerMask (only
+    // graphics_fill_rect does), so this uses the standard two-fills
+    // technique instead: fill the full bounds in the outline color, then
+    // fill a 1px-inset rect on top in the real fill color, both with the
+    // same corner mask so the inset fill's rounded corners nest neatly
+    // inside the outer border.
+    graphics_context_set_fill_color(ctx, tile_outline_color());
     graphics_fill_rect(ctx, bounds, TILE_RADIUS, corners);
+
+    GRect inner = GRect(bounds.origin.x + 1, bounds.origin.y + 1,
+                         bounds.size.w - 2, bounds.size.h - 2);
+    if (inner.size.w > 0 && inner.size.h > 0) {
+        graphics_context_set_fill_color(ctx, tile_fill_color(is_bottom));
+        graphics_fill_rect(ctx, inner, TILE_RADIUS > 0 ? TILE_RADIUS - 1 : 0, corners);
+    }
+    // When the flap is too thin (mid-animation) for even a 1px inset, it
+    // just shows as solid outline color for that sliver - not worth
+    // special-casing further, the sliver is on screen for a handful of
+    // animation frames at most.
 
     GRect text_box = GRect(0, y_offset, bounds.size.w, TILE_H);
 
     static char buf[3];
     snprintf(buf, sizeof(buf), "%02d", t->value);
 
-    graphics_context_set_text_color(ctx, GColorBlack);
+    graphics_context_set_text_color(ctx, tile_text_color());
     graphics_draw_text(ctx, buf, s_flip_font, text_box,
                         GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 }
@@ -528,7 +586,7 @@ static void top_flap_update_proc(Layer *layer, GContext *ctx) {
     FlipTile *t = *(FlipTile **)layer_get_data(layer);
     GRect bounds = layer_get_bounds(layer);
     int y_offset = (bounds.size.h - TOP_FLAP_REST_H) + DIGIT_Y_NUDGE;
-    draw_flap(ctx, t, bounds, y_offset, GCornersTop);
+    draw_flap(ctx, t, bounds, y_offset, GCornersTop, false);
 }
 
 // Lower flap: its TOP edge is always pinned at the crease
@@ -541,7 +599,7 @@ static void bottom_flap_update_proc(Layer *layer, GContext *ctx) {
     FlipTile *t = *(FlipTile **)layer_get_data(layer);
     GRect bounds = layer_get_bounds(layer);
     int y_offset = -BOTTOM_FLAP_REST_TOP_OFFSET + DIGIT_Y_NUDGE;
-    draw_flap(ctx, t, bounds, y_offset, GCornersBottom);
+    draw_flap(ctx, t, bounds, y_offset, GCornersBottom, true);
 }
 
 // ============================================================================
@@ -778,17 +836,37 @@ static void update_stats_panel(void);
 // see SHADOW_OFFSET.
 static void set_shadowed_text(TextLayer *shadow, TextLayer *real, const char *text);
 
+// Forward declaration: defined right next to set_shadowed_text() above,
+// but update_stats_panel() below needs it - see its own comment for why
+// (skips a redraw of both of a row's TextLayers when the text hasn't
+// actually changed since the last minute tick).
+static void set_shadowed_text_if_changed(TextLayer *shadow, TextLayer *real,
+                                          char *last, size_t last_size, const char *text);
+
 // AM/PM label - only visible in 12h mode (an empty string draws nothing, so
 // no need to hide/show the layer itself). Uses the RAW 24h hour (before
 // update_tiles() below converts its own local `hour` var to 12h), so this
 // doesn't depend on call order relative to that conversion.
+//
+// BATTERY: this is called from update_tiles() on every single minute tick,
+// but the AM/PM string itself only actually changes twice a day (at noon
+// and midnight, or never at all in 24h mode). text_layer_set_text() marks
+// the layer dirty unconditionally - it has no idea whether the string it's
+// handed is the same one already on screen - so without this guard every
+// one of the ~1438 other minute ticks a day was paying for a text
+// layout+redraw it didn't need. s_last_ampm remembers what's already shown
+// so those ticks can skip the call entirely.
 static void update_ampm_label(struct tm *tick_time) {
     if (!s_ampm_layer) return;
-    if (clock_is_24h_style()) {
-        text_layer_set_text(s_ampm_layer, "");
-        return;
-    }
-    text_layer_set_text(s_ampm_layer, tick_time->tm_hour < 12 ? "AM" : "PM");
+    static char s_last_ampm[3] = "\x01";   // "\x01": deliberately not "", "AM", or "PM" -
+                                             // guarantees the very first call always sets
+                                             // the label instead of matching a stale empty
+                                             // default by coincidence.
+    const char *new_text = clock_is_24h_style() ? "" : (tick_time->tm_hour < 12 ? "AM" : "PM");
+    if (strcmp(new_text, s_last_ampm) == 0) return;
+    text_layer_set_text(s_ampm_layer, new_text);
+    strncpy(s_last_ampm, new_text, sizeof(s_last_ampm) - 1);
+    s_last_ampm[sizeof(s_last_ampm) - 1] = '\0';
 }
 
 // Weekday name (full) and "DD Mmm" (abbreviated month) for the right-hand
@@ -847,10 +925,14 @@ static const LocaleDateNames *locale_date_names(void) {
     return &LOCALE_DATE_TABLE[0]; // fallback: English
 }
 
-// Only refreshed at minute granularity like everything else here - the
-// date only actually changes once a day, but re-checking every tick is
-// negligible cost and means a language change takes effect on the very
-// next minute tick rather than needing a relaunch.
+// Re-checked at minute granularity like everything else here - the
+// locale_date_names() lookup itself is negligible cost, and this way a
+// language change takes effect on the very next minute tick rather than
+// needing a relaunch. But the day/date TEXT this produces only actually
+// changes once every 1440 ticks (at midnight) - so, same reasoning as
+// update_ampm_label() above, the two text_layer_set_text() calls below
+// are now guarded against re-setting content that's already on screen,
+// saving a redraw of both layers on the other 1439 ticks a day.
 static void update_date_layout(struct tm *tick_time) {
     if (!s_day_layer || !s_date_layer) return;
 
@@ -861,9 +943,24 @@ static void update_date_layout(struct tm *tick_time) {
 
     // Weekday name points directly into the static const table above - no
     // buffer copy needed, that string literal's storage lives for the
-    // entire program, same as any other string literal.
-    text_layer_set_text(s_day_layer, names->weekdays[tick_time->tm_wday]);
-    text_layer_set_text(s_date_layer, date_buf);
+    // entire program, same as any other string literal. That also means a
+    // simple pointer comparison is enough to detect "unchanged" here (the
+    // same weekday on the same locale always yields the exact same
+    // pointer) - no strcmp needed, unlike date_buf below which is a
+    // freshly-formatted buffer each call.
+    static const char *s_last_weekday = NULL;
+    const char *weekday = names->weekdays[tick_time->tm_wday];
+    if (weekday != s_last_weekday) {
+        text_layer_set_text(s_day_layer, weekday);
+        s_last_weekday = weekday;
+    }
+
+    static char s_last_date[24] = "";
+    if (strcmp(date_buf, s_last_date) != 0) {
+        text_layer_set_text(s_date_layer, date_buf);
+        strncpy(s_last_date, date_buf, sizeof(s_last_date) - 1);
+        s_last_date[sizeof(s_last_date) - 1] = '\0';
+    }
 }
 
 static void update_tiles(bool force_all) {
@@ -873,8 +970,12 @@ static void update_tiles(bool force_all) {
 
     update_ampm_label(tick_time);
     update_date_layout(tick_time);
-    // Steps/sleep/watch-battery drift slowly over the day but cost nothing
-    // to re-check every minute tick, same cadence as everything else here.
+    // Steps/sleep/watch-battery drift slowly over the day, so it's fine to
+    // re-check all of them every minute tick, same cadence as everything
+    // else here - update_stats_panel() itself now only actually redraws a
+    // row's TextLayers when the freshly-formatted text differs from what
+    // it last displayed (see set_shadowed_text_if_changed()), so the
+    // common case of "nothing in this row changed this minute" is cheap.
     update_stats_panel();
 
     int hour = tick_time->tm_hour;
@@ -1074,8 +1175,14 @@ static void format_sleep_duration(char *buf, size_t buf_size, int sleep_seconds)
 // Refreshes all three stats-panel rows. Cheap enough to call on every
 // minute tick (from update_tiles()) as well as whenever a relevant
 // AppMessage arrives (weather high/low, phone battery, or a UseFahrenheit
-// change recalculating row 1's H/L values) - it just re-formats and
-// re-assigns text, no layout/geometry work happens here.
+// change recalculating row 1's H/L values) - it just re-formats text,
+// no layout/geometry work happens here. BATTERY: each row goes through
+// set_shadowed_text_if_changed() rather than set_shadowed_text() directly
+// - on most minute ticks none of these five values actually move (watch/
+// phone battery % change a handful of times a day, today's hi/lo only
+// when weather refreshes, and even steps/sleep are often flat minute to
+// minute), so this skips what would otherwise be 10 unnecessary TextLayer
+// redraws (5 rows x shadow+real) nearly every tick.
 static void update_stats_panel(void) {
     // Row 1: today's high/low - s_temp_high/s_temp_low are always Celsius
     // (see the note on s_temperature above); display_temp() converts for
@@ -1083,6 +1190,7 @@ static void update_stats_panel(void) {
     // in sync with the Clay "Use Fahrenheit" toggle immediately, not just
     // the unit letter.
     static char hilo_buf[24];
+    static char hilo_last[24] = "";
     if (s_has_weather) {
         snprintf(hilo_buf, sizeof(hilo_buf), "H:%d° L:%d°%s",
                   display_temp(s_temp_high), display_temp(s_temp_low),
@@ -1090,34 +1198,41 @@ static void update_stats_panel(void) {
     } else {
         snprintf(hilo_buf, sizeof(hilo_buf), "--");
     }
-    set_shadowed_text(s_stats_temp_hilo_shadow_layer, s_stats_temp_hilo_layer, hilo_buf);
+    set_shadowed_text_if_changed(s_stats_temp_hilo_shadow_layer, s_stats_temp_hilo_layer,
+                                  hilo_last, sizeof(hilo_last), hilo_buf);
 
     // Row 2, left: steps.
     static char steps_buf[16];
+    static char steps_last[16] = "";
     int steps;
     if (health_metric_today(HealthMetricStepCount, &steps)) {
         snprintf(steps_buf, sizeof(steps_buf), "%d", steps);
     } else {
         snprintf(steps_buf, sizeof(steps_buf), "--");
     }
-    set_shadowed_text(s_stats_steps_shadow_layer, s_stats_steps_layer, steps_buf);
+    set_shadowed_text_if_changed(s_stats_steps_shadow_layer, s_stats_steps_layer,
+                                  steps_last, sizeof(steps_last), steps_buf);
 
     // Row 2, right: sleep total, formatted as "7h 32m".
     static char sleep_buf[16];
+    static char sleep_last[16] = "";
     int sleep_seconds;
     if (health_metric_today(HealthMetricSleepSeconds, &sleep_seconds)) {
         format_sleep_duration(sleep_buf, sizeof(sleep_buf), sleep_seconds);
     } else {
         snprintf(sleep_buf, sizeof(sleep_buf), "--");
     }
-    set_shadowed_text(s_stats_sleep_shadow_layer, s_stats_sleep_layer, sleep_buf);
+    set_shadowed_text_if_changed(s_stats_sleep_shadow_layer, s_stats_sleep_layer,
+                                  sleep_last, sizeof(sleep_last), sleep_buf);
 
     // Row 3, left: watch battery - BatteryStateService, on-watch, always
     // available (no accessibility check needed, unlike Health metrics).
     static char watch_batt_buf[8];
+    static char watch_batt_last[8] = "";
     BatteryChargeState watch_batt = battery_state_service_peek();
     snprintf(watch_batt_buf, sizeof(watch_batt_buf), "%d%%", watch_batt.charge_percent);
-    set_shadowed_text(s_stats_watch_battery_shadow_layer, s_stats_watch_battery_layer, watch_batt_buf);
+    set_shadowed_text_if_changed(s_stats_watch_battery_shadow_layer, s_stats_watch_battery_layer,
+                                  watch_batt_last, sizeof(watch_batt_last), watch_batt_buf);
 
     // Row 3, right: phone battery - no native Pebble API for this, arrives
     // over AppMessage from the phone's own JS (see PHONE_BATTERY/
@@ -1127,13 +1242,15 @@ static void update_stats_panel(void) {
     // to change (a dedicated icon, a different glyph, etc.) if you'd
     // rather show it differently.
     static char phone_batt_buf[8];
+    static char phone_batt_last[8] = "";
     if (s_has_phone_battery) {
         snprintf(phone_batt_buf, sizeof(phone_batt_buf), "%d%%%s", s_phone_battery_percent,
                   s_phone_charging ? "↑" : "");
     } else {
         snprintf(phone_batt_buf, sizeof(phone_batt_buf), "--");
     }
-    set_shadowed_text(s_stats_phone_battery_shadow_layer, s_stats_phone_battery_layer, phone_batt_buf);
+    set_shadowed_text_if_changed(s_stats_phone_battery_shadow_layer, s_stats_phone_battery_layer,
+                                  phone_batt_last, sizeof(phone_batt_last), phone_batt_buf);
 }
 
 // Plain 1px white hairline - shared by both stats-panel divider Layers.
@@ -1160,6 +1277,10 @@ static int tuple_get_int(Tuple *t, int fallback) {
 // but inbox_received_callback() below needs to call it live when the
 // BoldClockFont Clay toggle changes.
 static void set_flip_font(bool bold);
+
+// Forward declaration: same reason as set_flip_font() above, but for the
+// DarkMode Clay toggle.
+static void apply_dark_mode(void);
 
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
     bool weather_changed = false;
@@ -1278,6 +1399,17 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         }
     }
 
+    Tuple *dark_mode_tuple = dict_find(iterator, MESSAGE_KEY_DarkMode);
+    if (dark_mode_tuple) {
+        bool new_val = tuple_get_int(dark_mode_tuple, settings.dark_mode ? 1 : 0) == 1;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "settings: DarkMode received = %d", new_val);
+        if (new_val != settings.dark_mode) {
+            settings.dark_mode = new_val;
+            prv_save_settings();
+            apply_dark_mode();
+        }
+    }
+
     // Unconditional, and deliberately last: cheap to call, and this way it
     // always reflects the final state of everything above in one message -
     // weather high/low, phone battery, and a UseFahrenheit change (which
@@ -1341,6 +1473,27 @@ static void set_flip_font(bool bold) {
     }
 }
 
+// Applies settings.dark_mode to everything that depends on it outside of
+// draw_flap() itself - tile_fill_color()/tile_outline_color()/
+// tile_text_color() (FLIP TILE DRAWING section, above) are read fresh on
+// every flap redraw, so marking the flap layers dirty is all they need.
+// The AM/PM label is the one other element with a dark-mode-dependent
+// color (its text, same as the digits - see the user's own note "don't
+// forget the AM/PM box") that ISN'T repainted by a flap redraw, so its
+// text color is set explicitly here instead. Called once from
+// main_window_load() (to apply whatever was loaded from persisted
+// settings before the very first paint) and again from
+// inbox_received_callback() whenever the DarkMode Clay toggle changes.
+static void apply_dark_mode(void) {
+    if (s_ampm_layer) {
+        text_layer_set_text_color(s_ampm_layer, tile_text_color());
+    }
+    for (int i = 0; i < NUM_TILES; i++) {
+        if (s_tiles[i].top_layer) layer_mark_dirty(s_tiles[i].top_layer);
+        if (s_tiles[i].bottom_layer) layer_mark_dirty(s_tiles[i].bottom_layer);
+    }
+}
+
 // Drop-shadow trick for the five stats-panel row texts below the clock
 // island ONLY (weather H/L, steps, sleep, watch battery, phone battery) -
 // builds a black copy of `frame`, offset SHADOW_OFFSET px down-and-right,
@@ -1371,6 +1524,24 @@ static TextLayer *create_shadow_text_layer(GRect frame, GFont font, GTextAlignme
 static void set_shadowed_text(TextLayer *shadow, TextLayer *real, const char *text) {
     if (shadow) text_layer_set_text(shadow, text);
     if (real) text_layer_set_text(real, text);
+}
+
+// Same as set_shadowed_text() above, but skips the call (and the redraw
+// of both layers it triggers) when `text` is identical to what was shown
+// last time. text_layer_set_text() has no idea whether the string it's
+// handed is new - it marks the layer dirty unconditionally - so without
+// this, update_stats_panel() below was forcing a redraw of all five
+// stats rows (ten TextLayers, counting each row's shadow copy) on every
+// single minute tick, even though none of watch battery %, phone battery
+// %, today's high/low, or (most minutes) steps/sleep actually change that
+// often. `last` is a small static per-row buffer the caller owns and
+// passes in on every call, so it persists between ticks.
+static void set_shadowed_text_if_changed(TextLayer *shadow, TextLayer *real,
+                                          char *last, size_t last_size, const char *text) {
+    if (strncmp(last, text, last_size) == 0) return;
+    set_shadowed_text(shadow, real, text);
+    strncpy(last, text, last_size - 1);
+    last[last_size - 1] = '\0';
 }
 
 // Builds one stats-panel entry: a STATS_ICON_SIZE-square icon at (x, y),
@@ -1665,6 +1836,12 @@ static void main_window_load(Window *window) {
     layer_add_child(s_window_layer, bitmap_layer_get_layer(s_raindrops_layer));
 
     update_tiles(true);
+    // Applies settings.dark_mode (loaded by prv_load_settings() back in
+    // init(), same as every other Clay setting) to the AM/PM label's text
+    // color before the very first paint - the flap layers' own dark-mode
+    // colors need no equivalent call here since draw_flap() already reads
+    // settings.dark_mode fresh on every redraw, including this first one.
+    apply_dark_mode();
     update_weather_layout();
     // Note: update_tiles(true) above already calls update_stats_panel()
     // internally (see TIME HANDLING section), so the panel is populated
